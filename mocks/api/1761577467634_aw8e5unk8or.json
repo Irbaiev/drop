@@ -1,0 +1,38 @@
+{
+  "time": "2025-10-27T15:04:27.634Z",
+  "request": {
+    "method": "POST",
+    "url": "https://rgs.twist-rgs.com/wallet/end-round",
+    "headers": {
+      "accept": "*/*",
+      "accept-language": "en-US",
+      "content-type": "application/json",
+      "origin": "https://mirror-image-gaming.live.stake-engine.com",
+      "referer": "https://mirror-image-gaming.live.stake-engine.com/",
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Google Chrome\";v=\"141\", \"Not?A_Brand\";v=\"8\", \"Chromium\";v=\"141\"",
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": "\"Windows\""
+    },
+    "bodyB64": "eyJzZXNzaW9uSUQiOiJmNGI0ODQ5Mi1mNThkLTQwZWMtYTA0OS1kNzc4M2JkMWQ2ZmEiLCJnYW1lSUQiOiIwMTk2ZWNkMC1jMDZjLTc0Y2EtOWJjOS1lNmIzMzEwZjE2NTEifQ=="
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "strict-transport-security": "max-age=0",
+      "content-encoding": "br",
+      "cf-cache-status": "DYNAMIC",
+      "cf-ray": "995315fdb9014434-ARN",
+      "access-control-allow-origin": "*",
+      "alt-svc": "h3=\":443\"; ma=86400",
+      "server-timing": "cfExtPri",
+      "date": "Mon, 27 Oct 2025 15:04:26 GMT",
+      "content-type": "application/json",
+      "vary": "Origin",
+      "server": "cloudflare",
+      "priority": "u=1,i"
+    },
+    "contentType": "application/json",
+    "bodyB64": "eyJiYWxhbmNlIjp7ImFtb3VudCI6MTMxNTY4ODAwMCwiY3VycmVuY3kiOiJVU0QifX0K"
+  }
+}

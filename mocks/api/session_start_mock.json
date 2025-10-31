@@ -1,0 +1,27 @@
+{
+  "time": "2025-01-27T12:00:00.000Z",
+  "request": {
+    "method": "POST",
+    "url": "https://mock-casino.easygo-send-it.com/session/start",
+    "headers": {
+      "accept": "*/*",
+      "accept-language": "en-US",
+      "content-type": "application/json",
+      "origin": "http://localhost:8080",
+      "referer": "http://localhost:8080/",
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    },
+    "bodyB64": "eyJzZXNzaW9uSUQiOiJmNGI0ODQ5Mi1mNThkLTQwZWMtYTA0OS1kNzc4M2JkMWQ2ZmEiLCJnYW1lSUQiOiJ0cy10Zy1wYXBlcnBsYW5lIn0="
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS",
+      "access-control-allow-headers": "Content-Type, Authorization"
+    },
+    "contentType": "application/json",
+    "bodyB64": "eyJzdWNjZXNzIjp0cnVlLCJzZXNzaW9uSWQiOiJmNGI0ODQ5Mi1mNThkLTQwZWMtYTA0OS1kNzc4M2JkMWQ2ZmEiLCJnYW1lSWQiOiJ0cy10Zy1wYXBlcnBsYW5lIiwiY29uZmlnIjp7ImdhbWVJRCI6InRzLXRnLXBhcGVycGxhbmUiLCJtaW5CZXQiOjEwMDAwLCJtYXhCZXQiOjEwMDAwMDAwMDAsInN0ZXBCZXQiOjEwMDAwLCJkZWZhdWx0QmV0TGV2ZWwiOjEwMDAwMDAsImJldExldmVscyI6WzEwMDAwMCwyMDAwMDAsNDAwMDAwLDYwMDAwMCw4MDAwMDAsMTAwMDAwMCwxMjAwMDAwLDE0MDAwMDAsMTYwMDAwMCwxODAwMDAwLDIwMDAwMDAsMzAwMDAwMCw0MDAwMDAwLDUwMDAwMDAsNjAwMDAwMCw3MDAwMDAwLDgwMDAwMDAsOTAwMDAwMCwxMDAwMDAwMCwxMjAwMDAwMCwxNDAwMDAwMCwxNjAwMDAwMCwxODAwMDAwMCwyMDAwMDAwMCwzMDAwMDAwMCw0MDAwMDAwMCw1MDAwMDAwMCw3NTAwMDAwMCwxMDAwMDAwMDAsMTUwMDAwMDAwLDIwMDAwMDAwMCwyNTAwMDAwMDAsMzAwMDAwMDAwLDM1MDAwMDAwMCw0MDAwMDAwMDAsNDUwMDAwMDAwLDUwMDAwMDAwMCw3NTAwMDAwMDAsMTAwMDAwMDAwMF0sImJldE1vZGVzIjp7fSwianVyaXNkaWN0aW9uIjp7InNvY2lhbENhc2lubyI6ZmFsc2UsImRpc2FibGVkRnVsbHNjcmVlbiI6ZmFsc2UsImRpc2FibGVkVHVyYm8iOmZhbHNlLCJkaXNhYmxlZFN1cGVyVHVyYm8iOmZhbHNlLCJkaXNhYmxlZEF1dG9wbGF5IjpmYWxzZSwiZGlzYWJsZWRTbGFtc3RvcCI6ZmFsc2UsImRpc2FibGVkU3BhY2ViYXIiOmZhbHNlLCJkaXNhYmxlZEJ1eUZlYXR1cmUiOmZhbHNlLCJkaXNwbGF5TmV0UG9zaXRpb24iOmZhbHNlLCJkaXNwbGF5UlRQIjpmYWxzZSwiZGlzcGxheVNlc3Npb25UaW1lciI6ZmFsc2UsIm1pbmltdW1Sb3VuZER1cmF0aW9uIjowfX0sImJhbGFuY2UiOnsiYW1vdW50Ijo5OTcwMDAwMDAsImN1cnJlbmN5IjoiVVNEIn0sInJvdW5kIjpudWxsfQ=="
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "balance": {
+    "amount": 900000000,
+    "currency": "USD"
+  },
+  "round": {
+    "betID": 2237447612,
+    "amount": 1000000,
+    "payout": 23120000,
+    "payoutMultiplier": 23.12,
+    "active": true,
+    "state": [
+      {
+        "data": "eJzsvV+TI7ex9vlddO1WFFAAqsp3q9k4oYv1huOs36sTvmjP9Eodb2va0TNeHcUJf/clm0QWqgGQLBJ/HhTTNxq3RmQ1iXx+QCLzyf/6r//54fsf/3z64c8/fH36/dPrb/98/fr09fsPf/rhM/35z//zw9fH3/Z/5f/5/q+v3397/Lr7198ff/n2w5//a/7R3//0w7/+9fxl97f2r/KjMMr00+4vPv3397fH//Px++Pub//PD/98/OP1X9//8q+X78//fHl+evvhz92///7vP/3wz9dv+/f5793//9MPf/zwZ7X72ePXz7++vv319fnwDPt/96N+/7e7f77/+19edk817f6Lz78+v3x5e/r6/h6hJ//H4+f//X+8/fYDPeT//frl6ce+l1r/sHj7B9EfHkBf/gQPQoh//yn8xv/v2+vX7//X0y+BdzYf3rk/vLTsI+88DYMQvVF9p1U/mf74IKrrOjOJQSnVGWPG+b" ,
+        "metaTags": [
+          { "id": 2481590, "name": "collision", "value": "Stuntman_Stuntman", "simulationDataId": 218242 },
+          { "id": 2481591, "name": "collision", "value": "Stuntman_blackHole", "simulationDataId": 218242 },
+          { "id": 2481592, "name": "collision", "value": "Stuntman_CyberTruck", "simulationDataId": 218242 },
+          { "id": 2481593, "name": "jackpot", "value": "CyberTruck", "simulationDataId": 218242 },
+          { "id": 2481594, "name": "collision", "value": "Stuntman_Floor", "simulationDataId": 218242 },
+          { "id": 2481595, "name": "totalTime", "value": "34.2", "simulationDataId": 218242 },
+          { "id": 2481596, "name": "win", "value": "23.12", "simulationDataId": 218242 },
+          { "id": 2481597, "name": "betMode", "value": "{\"size\":\"normal\",\"slippery\":false,\"bouncy\":false,\"extraPrize\":true}", "simulationDataId": 218242 }
+        ]
+      }
+    ],
+    "mode": "chaos",
+    "event": null
+  }
+}
+
+
+

@@ -1,0 +1,27 @@
+{
+  "time": "2025-01-27T12:00:00.000Z",
+  "request": {
+    "method": "POST",
+    "url": "https://rgs.twist-rgs.com/wallet/play",
+    "headers": {
+      "accept": "*/*",
+      "accept-language": "en-US",
+      "content-type": "application/json",
+      "origin": "http://localhost:8080",
+      "referer": "http://localhost:8080/",
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    },
+    "bodyB64": "eyJzZXNzaW9uSUQiOiJmNGI0ODQ5Mi1mNThkLTQwZWMtYTA0OS1kNzc4M2JkMWQ2ZmEiLCJhbW91bnQiOjE2MDAwMDAsImN1cnJlbmN5IjoiVVNEIiwiZ2FtZUlEIjoiMDE5NmVjZDAtYzA2Yy03NGNhLTliYzktZTZiMzMxMGYxNjUxIiwibW9kZSI6ImJhc2UifQ=="
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "GET, POST, PUT, DELETE, OPTIONS",
+      "access-control-allow-headers": "Content-Type, Authorization"
+    },
+    "contentType": "application/json",
+    "bodyB64": "eyJiYWxhbmNlIjp7ImFtb3VudCI6OTk4NDAwMDAwLCJjdXJyZW5jeSI6IlVTRCJ9LCJyb3VuZCI6eyJiZXRJRCI6MjE5ODU2NzQ5MCwiYW1vdW50IjoxNjAwMDAwLCJhY3RpdmUiOnRydWUsInN0YXRlIjpbeyJkYXRhIjoiZUp4VmprRUx3akFNaGYvS3lIbEl6OTRFaFYzRWc4ZXhRK3hhQ1lha3RCMWpqUDEzNnhoVGI4bjNYdkplMjg2UXArRGdXRUdqTVpJbmU1RW5pVHRUd3BSZGhLV3V2aDVQZ255M0doM1VGZlNVTW9wMXB4RmpYMlJ6TUlWNnByQ1RzbHNsU2R2OFlMU3ZSdGxkQjg2MFFjK3E4ZmRpVGRuQlg0R1I1Sk1jY0xvTmVYMFNtRXJMSWhsWXV1NE4xb3hDaHc9PSIsIm1ldGFUYWdzIjpbeyJpZCI6MjQ1MTc2NSwibmFtZSI6IndpbiIsInZhbHVlIjoiMTYwMDAwMCIsInNpbXVsYXRpb25EYXRhSWQiOjIxMjY2MH0seyJpZCI6MjQ1MTc2NiwibmFtZSI6IkVuZ2luZURpc2FzdGVyIiwidmFsdWUiOmZhbHNlLCJzaW11bGF0aW9uRGF0YUlkIjoyMTI2NjB9XX1dLCJtb2RlIjoiYmFzZSIsImV2ZW50IjpudWxsLCJwYXlvdXQiOjE2MDAwMDAsInBheW91dE11bHRpcGxpZXIiOjEuMH19"
+  }
+}
