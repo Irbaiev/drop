@@ -1,0 +1,36 @@
+{
+  "time": "2025-10-27T15:01:14.198Z",
+  "request": {
+    "method": "GET",
+    "url": "https://mirror-image-gaming.live.stake-engine.com/drop-the-boss/v10/src/import-map.json",
+    "headers": {
+      "accept": "*/*",
+      "accept-language": "en-US",
+      "referer": "https://mirror-image-gaming.live.stake-engine.com/drop-the-boss/v10/?sessionID=f4b48492-f58d-40ec-a049-d7783bd1d6fa&rgs_url=rgs.twist-rgs.com&lang=ru&currency=USD&device=desktop&social=false&demo=true",
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Google Chrome\";v=\"141\", \"Not?A_Brand\";v=\"8\", \"Chromium\";v=\"141\"",
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": "\"Windows\""
+    },
+    "bodyB64": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "strict-transport-security": "max-age=0",
+      "cache-control": "public, max-age=31536000, immutable",
+      "content-encoding": "br",
+      "cf-cache-status": "HIT",
+      "etag": "W/\"460001f94217b558a1b986599b99021e\"",
+      "age": "1111823",
+      "cf-ray": "99531144ef90370a-ARN",
+      "date": "Mon, 27 Oct 2025 15:01:13 GMT",
+      "content-type": "application/json",
+      "no-vary-search": "key-order, params",
+      "vary": "accept-encoding",
+      "server": "cloudflare"
+    },
+    "contentType": "application/json",
+    "bodyB64": "eyJpbXBvcnRzIjp7ImNjIjoiLi8uLi9jb2Nvcy1qcy9jYy5qcyJ9fQ=="
+  }
+}

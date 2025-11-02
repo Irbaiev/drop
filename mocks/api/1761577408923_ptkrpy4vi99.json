@@ -1,0 +1,38 @@
+{
+  "time": "2025-10-27T15:03:28.923Z",
+  "request": {
+    "method": "POST",
+    "url": "https://rgs.twist-rgs.com/wallet/play",
+    "headers": {
+      "accept": "*/*",
+      "accept-language": "en-US",
+      "content-type": "application/json",
+      "origin": "https://mirror-image-gaming.live.stake-engine.com",
+      "referer": "https://mirror-image-gaming.live.stake-engine.com/",
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Google Chrome\";v=\"141\", \"Not?A_Brand\";v=\"8\", \"Chromium\";v=\"141\"",
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": "\"Windows\""
+    },
+    "bodyB64": "eyJzZXNzaW9uSUQiOiJmNGI0ODQ5Mi1mNThkLTQwZWMtYTA0OS1kNzc4M2JkMWQ2ZmEiLCJhbW91bnQiOjE2MDAwMDAsImN1cnJlbmN5IjoiVVNEIiwiZ2FtZUlEIjoiMDE5NmVjZDAtYzA2Yy03NGNhLTliYzktZTZiMzMxMGYxNjUxIiwibW9kZSI6ImJhc2UifQ=="
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "strict-transport-security": "max-age=0",
+      "content-encoding": "br",
+      "cf-cache-status": "DYNAMIC",
+      "cf-ray": "9953148e7d854434-ARN",
+      "access-control-allow-origin": "*",
+      "alt-svc": "h3=\":443\"; ma=86400",
+      "server-timing": "cfExtPri",
+      "date": "Mon, 27 Oct 2025 15:03:27 GMT",
+      "content-type": "application/json",
+      "vary": "Origin",
+      "server": "cloudflare",
+      "priority": "u=1,i"
+    },
+    "contentType": "application/json",
+    "bodyB64": "eyJiYWxhbmNlIjp7ImFtb3VudCI6MTI4OTg4MDAwMCwiY3VycmVuY3kiOiJVU0QifSwicm91bmQiOnsiYmV0SUQiOjIxOTg1Nzk1NzIsImFtb3VudCI6MTYwMDAwMCwiYWN0aXZlIjpmYWxzZSwic3RhdGUiOlt7ImRhdGEiOiJlSnhWamtFTHdqQU1oZi9LeUhsSXo5NEVoVjNFZzhleFFcdTAwMkJ4YUNZYWt0QjFqalAxMzZ4aFRiOG4zWHZKZTI4NlFwXHUwMDJCRGdXRUdqTVpJbmU1RW5pVHRUd3BSZGhLV3V2aDVQZ255M0doM1VGZlNVTW9wMXB4RmpYMlJ6TUlWNnByQ1RzbHNsU2R2OFlMU3ZSdGxkQjg2MFFjXHUwMDJCcThmZGlUZG5CWDRHUjVKTWNjTG9OZVgwU21FckxJaGxZdXU0TjFveENodz09IiwibWV0YVRhZ3MiOlt7ImlkIjoyNDUxNzY1LCJuYW1lIjoid2luIiwidmFsdWUiOiIwIiwic2ltdWxhdGlvbkRhdGFJZCI6MjEyNjYwfSx7ImlkIjoyNDUxNzY2LCJuYW1lIjoiRW5naW5lRGlzYXN0ZXIiLCJ2YWx1ZSI6InRydWUiLCJzaW11bGF0aW9uRGF0YUlkIjoyMTI2NjB9XX1dLCJtb2RlIjoiYmFzZSIsImV2ZW50IjpudWxsfX0K"
+  }
+}

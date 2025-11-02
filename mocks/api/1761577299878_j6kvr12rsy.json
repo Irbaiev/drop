@@ -1,0 +1,36 @@
+{
+  "time": "2025-10-27T15:01:39.877Z",
+  "request": {
+    "method": "POST",
+    "url": "https://rgs.twist-rgs.com/wallet/authenticate",
+    "headers": {
+      "accept": "*/*",
+      "accept-language": "en-US",
+      "content-type": "application/json",
+      "origin": "https://mirror-image-gaming.live.stake-engine.com",
+      "referer": "https://mirror-image-gaming.live.stake-engine.com/",
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "sec-ch-ua": "\"Google Chrome\";v=\"141\", \"Not?A_Brand\";v=\"8\", \"Chromium\";v=\"141\"",
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": "\"Windows\""
+    },
+    "bodyB64": "eyJzZXNzaW9uSUQiOiJmNGI0ODQ5Mi1mNThkLTQwZWMtYTA0OS1kNzc4M2JkMWQ2ZmEiLCJnYW1lSUQiOiIwMTk2ZWNkMC1jMDZjLTc0Y2EtOWJjOS1lNmIzMzEwZjE2NTEifQ=="
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "strict-transport-security": "max-age=0",
+      "content-encoding": "br",
+      "cf-cache-status": "DYNAMIC",
+      "cf-ray": "995311e45e399932-ARN",
+      "access-control-allow-origin": "*",
+      "alt-svc": "h3=\":443\"; ma=86400",
+      "date": "Mon, 27 Oct 2025 15:01:38 GMT",
+      "content-type": "application/json",
+      "vary": "Origin",
+      "server": "cloudflare"
+    },
+    "contentType": "application/json",
+    "bodyB64": "eyJiYWxhbmNlIjp7ImFtb3VudCI6OTk3MDAwMDAwLCJjdXJyZW5jeSI6IlVTRCJ9LCJyb3VuZCI6bnVsbCwiY29uZmlnIjp7ImdhbWVJRCI6IiIsIm1pbkJldCI6MTAwMDAwLCJtYXhCZXQiOjEwMDAwMDAwMDAsInN0ZXBCZXQiOjEwMDAwLCJkZWZhdWx0QmV0TGV2ZWwiOjEwMDAwMDAsImJldExldmVscyI6WzEwMDAwMCwyMDAwMDAsNDAwMDAwLDYwMDAwMCw4MDAwMDAsMTAwMDAwMCwxMjAwMDAwLDE0MDAwMDAsMTYwMDAwMCwxODAwMDAwLDIwMDAwMDAsMzAwMDAwMCw0MDAwMDAwLDUwMDAwMDAsNjAwMDAwMCw3MDAwMDAwLDgwMDAwMDAsOTAwMDAwMCwxMDAwMDAwMCwxMjAwMDAwMCwxNDAwMDAwMCwxNjAwMDAwMCwxODAwMDAwMCwyMDAwMDAwMCwzMDAwMDAwMCw0MDAwMDAwMCw1MDAwMDAwMCw3NTAwMDAwMCwxMDAwMDAwMDAsMTUwMDAwMDAwLDIwMDAwMDAwMCwyNTAwMDAwMDAsMzAwMDAwMDAwLDM1MDAwMDAwMCw0MDAwMDAwMDAsNDUwMDAwMDAwLDUwMDAwMDAwMCw3NTAwMDAwMDAsMTAwMDAwMDAwMF0sImJldE1vZGVzIjp7fSwianVyaXNkaWN0aW9uIjp7InNvY2lhbENhc2lubyI6ZmFsc2UsImRpc2FibGVkRnVsbHNjcmVlbiI6ZmFsc2UsImRpc2FibGVkVHVyYm8iOmZhbHNlLCJkaXNhYmxlZFN1cGVyVHVyYm8iOmZhbHNlLCJkaXNhYmxlZEF1dG9wbGF5IjpmYWxzZSwiZGlzYWJsZWRTbGFtc3RvcCI6ZmFsc2UsImRpc2FibGVkU3BhY2ViYXIiOmZhbHNlLCJkaXNhYmxlZEJ1eUZlYXR1cmUiOmZhbHNlLCJkaXNwbGF5TmV0UG9zaXRpb24iOmZhbHNlLCJkaXNwbGF5UlRQIjpmYWxzZSwiZGlzcGxheVNlc3Npb25UaW1lciI6ZmFsc2UsIm1pbmltdW1Sb3VuZER1cmF0aW9uIjowfX19Cg=="
+  }
+}

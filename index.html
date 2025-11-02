@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Offline Game</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body, html { width: 100%; height: 100%; overflow: hidden; }
+    iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <iframe id="game-frame" src="mirror\mirror-image-gaming.live.stake-engine.com\drop-the-boss\v10\index.__q_57679522.html?access_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzZXNzaW9uIjp7InBsYXllcklkIjoiZGVtbzp0b3BzcGluLXN0d2FsbGV0OjExMzU0MDc3IiwiZ2FtZUlkIjoidHMtdGctcGFwZXJwbGFuZSIsImlzUGxheUZvckZ1biI6dHJ1ZSwiY3VycmVuY3kiOiJVU0QiLCJmb3JjZUNvbmZpZyI6IiIsImlwQWRkcmVzcyI6Ijc4LjQwLjExNi4xMzYiLCJzdWJQYXJ0bmVySUQiOiIiLCJjYWxsQmFja1VSTCI6IiJ9fQ.LOsJIU1o3dul065zHwLrKXI4UPMoVcE1wfmwLwfjBKA&play_for_fun=true&language=en&currency=USD" allowfullscreen></iframe>
+  
+  <script>
+    const iframe = document.getElementById('game-frame');
+    
+    function resizeIframe() {
+      iframe.style.width = window.innerWidth + 'px';
+      iframe.style.height = window.innerHeight + 'px';
+    }
+    
+    window.addEventListener('resize', resizeIframe);
+    window.addEventListener('load', resizeIframe);
+    resizeIframe();
+  </script>
+</body>
+</html>
