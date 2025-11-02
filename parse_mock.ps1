@@ -1,19 +1,100 @@
 $content = Get-Content 'mock.txt' -Raw
-$rawObjects = $content -split '(?<=})\r?\n(?=\{)'
+
+# Улучшенное разделение объектов - учитываем что объекты разделяются } и {
+# Используем более надежный способ парсинга
+$rawObjects = @()
+$currentObject = ""
+$braceCount = 0
+$inString = $false
+$escapeNext = $false
+
+for ($i = 0; $i -lt $content.Length; $i++) {
+    $char = $content[$i]
+    $prevChar = if ($i -gt 0) { $content[$i-1] } else { '' }
+    
+    if ($escapeNext) {
+        $currentObject += $char
+        $escapeNext = $false
+        continue
+    }
+    
+    if ($char -eq '\' -and -not $escapeNext) {
+        $escapeNext = $true
+        $currentObject += $char
+        continue
+    }
+    
+    if ($char -eq '"' -and -not $escapeNext) {
+        $inString = -not $inString
+        $currentObject += $char
+        continue
+    }
+    
+    if (-not $inString) {
+        if ($char -eq '{') {
+            if ($braceCount -eq 0 -and $currentObject.Trim()) {
+                # Сохраняем предыдущий объект если он был
+                $rawObjects += $currentObject
+                $currentObject = ""
+            }
+            $braceCount++
+            $currentObject += $char
+        }
+        elseif ($char -eq '}') {
+            $currentObject += $char
+            $braceCount--
+            if ($braceCount -eq 0) {
+                # Объект завершен
+                $rawObjects += $currentObject
+                $currentObject = ""
+            }
+        }
+        else {
+            $currentObject += $char
+        }
+    }
+    else {
+        $currentObject += $char
+    }
+}
+
+# Добавляем последний объект если есть
+if ($currentObject.Trim()) {
+    $rawObjects += $currentObject
+}
 $objects = @()
 
+$errorCount = 0
+$objIndex = 0
 foreach ($rawObj in $rawObjects) {
+    $objIndex++
     $objStr = $rawObj.Trim()
+    
+    # Пропускаем пустые объекты
+    if ([string]::IsNullOrWhiteSpace($objStr)) {
+        continue
+    }
+    
+    # Убеждаемся что объект начинается с { и заканчивается }
+    if (-not $objStr.StartsWith('{')) {
+        continue
+    }
+    
     if (-not $objStr.EndsWith('}')) {
         $objStr = $objStr + '}'
     }
     
     try {
         $obj = $objStr | ConvertFrom-Json
-        $objects += $obj
-        Write-Host "Parsed object with mode: $($obj.round.mode)"
+        if ($obj -and $obj.round -and $obj.round.mode) {
+            $objects += $obj
+            Write-Host "Parsed object #$objIndex with mode: $($obj.round.mode)"
+        }
     } catch {
-        Write-Host "Error parsing object"
+        $errorCount++
+        if ($errorCount -le 5) {
+            Write-Host "Error parsing object #$objIndex : $($_.Exception.Message)"
+        }
     }
 }
 

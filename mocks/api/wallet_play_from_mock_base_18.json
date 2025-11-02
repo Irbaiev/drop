@@ -1,0 +1,32 @@
+﻿{
+    "balance":  {
+                    "amount":  995090000,
+                    "currency":  "USD"
+                },
+    "round":  {
+                  "betID":  2276341732,
+                  "amount":  1000000,
+                  "active":  false,
+                  "state":  [
+                                {
+                                    "data":  "eJxVjkELwjAMhf/KyHlIz94EhV3Eg8exQ+xaCYaktB1jjP136xhTb8n3XvJe286Qp+DgWEGjMZIne5EniTtTwpRdhKWuvh5Pgny3Gh3UFfSUMop1pxFjX2RzMIV6prCTslslSdv8YLSvRtldB860Qc+q8fdiTdnBX4GR5JMccLoNeX0SmErLIhlYuu4N1oxChw==",
+                                    "metaTags":  [
+                                                     {
+                                                         "id":  2451765,
+                                                         "name":  "win",
+                                                         "value":  "0",
+                                                         "simulationDataId":  212660
+                                                     },
+                                                     {
+                                                         "id":  2451766,
+                                                         "name":  "EngineDisaster",
+                                                         "value":  "true",
+                                                         "simulationDataId":  212660
+                                                     }
+                                                 ]
+                                }
+                            ],
+                  "mode":  "base",
+                  "event":  null
+              }
+}

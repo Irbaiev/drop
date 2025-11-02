@@ -934,66 +934,29 @@
           if (requestMode === 'ante') {
             // ANTE: используем моки из wallet_play_from_mock_ante_*.json
             // weight определяет относительную вероятность выпадения (чем больше, тем чаще)
-            const anteMocks = [
-              { file: 'mocks/api/wallet_play_from_mock_ante_1.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_ante_2.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_ante_3.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_ante_4.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_ante_5.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_ante_6.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_ante_7.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_ante_8.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_ante_9.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_ante_10.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_ante_11.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_ante_12.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_ante_13.json', weight: 1 }
-            ];
+            const anteMocks = [];
+            for (let i = 1; i <= 68; i++) {
+              anteMocks.push({ file: `mocks/api/wallet_play_from_mock_ante_${i}.json`, weight: 1 });
+            }
             mockFile = selectWeightedMock(anteMocks);
             console.log('[OFFLINE] Using ante mock:', mockFile);
           } else if (requestMode === 'chaos') {
             // CHAOS: используем моки из wallet_play_from_mock_chaos_*.json
-            const chaosMocks = [
-              { file: 'mocks/api/wallet_play_from_mock_chaos_1.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_chaos_2.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_chaos_3.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_chaos_4.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_chaos_5.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_chaos_6.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_chaos_7.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_chaos_8.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_chaos_9.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_chaos_10.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_chaos_11.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_chaos_12.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_chaos_13.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_chaos_14.json', weight: 1 }
-            ];
+            const chaosMocks = [];
+            for (let i = 1; i <= 28; i++) {
+              chaosMocks.push({ file: `mocks/api/wallet_play_from_mock_chaos_${i}.json`, weight: 1 });
+            }
             mockFile = selectWeightedMock(chaosMocks);
             console.log('[OFFLINE] Using chaos mock:', mockFile);
           } else {
             // BASE: используем моки из wallet_play_from_mock_base_*.json и старые wallet_play_*.json (включая проигрыш)
-            // Проигрыш (wallet_play_2.json) имеет вес 12 для вероятности ~40% (12/(12+18) = 40%)
-            const baseMocks = [
-              { file: 'mocks/api/wallet_play_from_mock_base_1.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_base_2.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_base_3.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_base_4.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_base_5.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_base_6.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_base_7.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_base_8.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_base_9.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_base_10.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_base_11.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_base_12.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_base_13.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_base_14.json', weight: 1 },
-              { file: 'mocks/api/wallet_play_from_mock_base_15.json', weight: 1 },
-              // Старые моки, включая проигрыш (wallet_play_2.json - проигрыш, payout отсутствует)
-              { file: 'mocks/api/wallet_play_2.json', weight: 12 }, // ПРОИГРЫШ - 40% вероятность
-
-            ];
+            // Проигрыш (wallet_play_2.json) имеет вес 12 для вероятности ~40% (12/(12+47) = 20.3%)
+            const baseMocks = [];
+            for (let i = 1; i <= 47; i++) {
+              baseMocks.push({ file: `mocks/api/wallet_play_from_mock_base_${i}.json`, weight: 1 });
+            }
+            // Старые моки, включая проигрыш (wallet_play_2.json - проигрыш, payout отсутствует)
+            baseMocks.push({ file: 'mocks/api/wallet_play_2.json', weight: 12 }); // ПРОИГРЫШ
             mockFile = selectWeightedMock(baseMocks);
             console.log('[OFFLINE] Using base mock:', mockFile);
           }

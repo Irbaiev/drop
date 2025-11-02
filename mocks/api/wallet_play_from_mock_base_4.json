@@ -1,46 +1,46 @@
-{
-  "balance": {
-    "amount": 994320000,
-    "currency": "USD"
-  },
-  "round": {
-    "betID": 2251969919,
-    "amount": 1000000,
-    "payout": 90000,
-    "payoutMultiplier": 0.09,
-    "active": true,
-    "state": [
-      {
-        "data": "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",
-        "metaTags": [
-          {
-            "id": 2465885,
-            "name": "collision",
-            "value": "Stuntman_Stuntman",
-            "simulationDataId": 215434
-          },
-          {
-            "id": 2465886,
-            "name": "totalTime",
-            "value": "2.3",
-            "simulationDataId": 215434
-          },
-          {
-            "id": 2465887,
-            "name": "win",
-            "value": "0.09",
-            "simulationDataId": 215434
-          },
-          {
-            "id": 2465888,
-            "name": "betMode",
-            "value": "{\"size\":\"normal\",\"slippery\":false,\"bouncy\":false,\"extraPrize\":false}",
-            "simulationDataId": 215434
-          }
-        ]
-      }
-    ],
-    "mode": "base",
-    "event": null
-  }
+﻿{
+    "balance":  {
+                    "amount":  994320000,
+                    "currency":  "USD"
+                },
+    "round":  {
+                  "betID":  2251969919,
+                  "amount":  1000000,
+                  "payout":  90000,
+                  "payoutMultiplier":  0.09,
+                  "active":  true,
+                  "state":  [
+                                {
+                                    "data":  "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",
+                                    "metaTags":  [
+                                                     {
+                                                         "id":  2465885,
+                                                         "name":  "collision",
+                                                         "value":  "Stuntman_Stuntman",
+                                                         "simulationDataId":  215434
+                                                     },
+                                                     {
+                                                         "id":  2465886,
+                                                         "name":  "totalTime",
+                                                         "value":  "2.3",
+                                                         "simulationDataId":  215434
+                                                     },
+                                                     {
+                                                         "id":  2465887,
+                                                         "name":  "win",
+                                                         "value":  "0.09",
+                                                         "simulationDataId":  215434
+                                                     },
+                                                     {
+                                                         "id":  2465888,
+                                                         "name":  "betMode",
+                                                         "value":  "{\"size\":\"normal\",\"slippery\":false,\"bouncy\":false,\"extraPrize\":false}",
+                                                         "simulationDataId":  215434
+                                                     }
+                                                 ]
+                                }
+                            ],
+                  "mode":  "base",
+                  "event":  null
+              }
 }
