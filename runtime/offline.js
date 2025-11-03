@@ -1098,20 +1098,51 @@
                   body = JSON.stringify(parsed);
                 }
 
-                // UI ставка в единицах бекенда
+                // UI ставка в единицах бекенда (нормализация применится позже, когда известен режим)
                 let uiBetUnits = isFinite(__offlineUiBet) ? Math.round(__offlineUiBet * currencyFactor) : NaN;
+                // Режим-зависимая нормализация ставки: минимум и шаг читаются из localStorage, дефолт 0.01$
+                const normalizeBetUnits = (valUnits, mode) => {
+                  if (!isFinite(valUnits) || valUnits <= 0) return NaN;
+                  const modeKey = String(mode || 'base').toUpperCase();
+                  let stepUsd = 0.01;
+                  let minUsd = 0.01;
+                  try {
+                    const lsStep = Number(localStorage.getItem('OFFLINE_BET_STEP_' + modeKey));
+                    if (isFinite(lsStep) && lsStep > 0) stepUsd = lsStep;
+                  } catch (_) {}
+                  try {
+                    const lsMin = Number(localStorage.getItem('OFFLINE_MIN_BET_' + modeKey));
+                    if (isFinite(lsMin) && lsMin > 0) minUsd = lsMin;
+                  } catch (_) {}
+                  const stepUnits = Math.max(1, Math.round(stepUsd * currencyFactor));
+                  const minUnits = Math.max(1, Math.round(minUsd * currencyFactor));
+                  const before = Math.round(valUnits);
+                  let v = Math.max(minUnits, before);
+                  v = Math.round(v / stepUnits) * stepUnits; // округляем к ближайшему шагу
+                  try {
+                    const toUsd = (u) => (isFinite(u) ? (u / currencyFactor).toFixed(2) : 'NaN');
+                    console.log(`[OFFLINE][STEP] mode=${modeKey} in(units)=${before} in($)=$${toUsd(before)} step=$${stepUsd} min=$${minUsd} stepUnits=${stepUnits} minUnits=${minUnits} -> out(units)=${v} out($)=$${toUsd(v)}`);
+                  } catch(_) {}
+                  return v;
+                };
 
                 // Правила подбора ставки:
                 // chaos/ante: amount из запроса > цена бонуса из UI/игровых объектов > расчет на основе базовой ставки > fallback
                 // base: amount > UI > cache > mock > 1$ * factor
                 let bet = NaN;
-                if (lastMode === 'chaos' || lastMode === 'ante') {
-                  // Для бонусных режимов приоритет: цена из UI/игровых объектов (Label) > amount из запроса > расчет от базовой ставки > fallback
-                  // Пытаемся получить цену бонуса из UI/игровых объектов
-                  const bonusPrice = __offlineGetBonusPrice(lastMode);
-                  const bonusPriceUnits = isFinite(bonusPrice) ? Math.round(bonusPrice * currencyFactor) : NaN;
-                  
-                  console.log(`[OFFLINE] ${lastMode} bonus price search result: bonusPrice=`, bonusPrice, ', bonusPriceUnits=', bonusPriceUnits, ', __offlineRequestedBet=', __offlineRequestedBet);
+                if (isEndRound) {
+                  // На end-round не пересчитываем ставку, используем последнюю из кэша
+                  try {
+                    const cached = Number(localStorage.getItem('OFFLINE_LAST_BET'));
+                    if (isFinite(cached)) bet = cached;
+                  } catch (_) {}
+                } else if (lastMode === 'chaos' || lastMode === 'ante') {
+                  // В бонусных режимах: пытаемся понять, это покупка бонуса (цена из UI) или обычная ставка
+                  let useBonusPrice = false;
+                  try { useBonusPrice = String(localStorage.getItem('OFFLINE_USE_BONUS_PRICE') || '').trim() === '1'; } catch (_) {}
+                  const detectedBonusPrice = __offlineGetBonusPrice(lastMode);
+                  const bonusPriceUnits = isFinite(detectedBonusPrice) ? Math.round(detectedBonusPrice * currencyFactor) : NaN;
+                  console.log(`[OFFLINE] ${lastMode} bonus price search result: bonusPrice=`, detectedBonusPrice, ', bonusPriceUnits=', bonusPriceUnits, ', __offlineRequestedBet=', __offlineRequestedBet);
                   
                   // Получаем последнюю базовую ставку (для расчета множителя)
                   let lastBaseBet = NaN;
@@ -1141,69 +1172,152 @@
                   } catch (_) {}
                   
                   // Множители для бонусов (относительно базовой ставки)
+                  // Разделены для хаоса, базы и ант; можно переопределить через localStorage
+                  let anteMult = 1;
+                  let chaosMult = 0.1; // раньше было 100; по умолчанию уменьшаем, чтобы ставка 100 не давала множитель 100
+                  try {
+                    const lsAnte = Number(localStorage.getItem('OFFLINE_MULTIPLIER_ANTE'));
+                    if (isFinite(lsAnte) && lsAnte > 0) anteMult = lsAnte;
+                  } catch (_) {}
+                  try {
+                    const lsChaos = Number(localStorage.getItem('OFFLINE_MULTIPLIER_CHAOS'));
+                    if (isFinite(lsChaos) && lsChaos > 0) chaosMult = lsChaos;
+                  } catch (_) {}
                   const bonusMultipliers = {
-                    'ante': 5,    // ante = 5x базовая ставка
-                    'chaos': 100  // chaos = 100x базовая ставка
+                    'ante': anteMult,
+                    'chaos': chaosMult,
+                    'base': 1
                   };
                   const multiplier = bonusMultipliers[lastMode] || 1;
                   
-                  // Для бонусных режимов amount из запроса может быть базовой ставкой, а не ценой бонуса
-                  // Приоритет: 1) цена из UI/игровых объектов (Label компоненты) 2) amount из запроса (если похож на цену бонуса) 3) расчет от базовой ставки 4) fallback
-                  if (isFinite(bonusPriceUnits)) {
-                    // Используем цену из UI/игровых объектов - это самый надежный источник
+                  // Упрощённая логика для chaos/ante: без авто-детектов, только явные правила
+                  // Приоритет: 1) явная покупка бонуса (OFFLINE_USE_BONUS_PRICE=1), 2) request amount, 3) UI bet, 4) last base bet, 5) fallback 0.01$
+                  let betSource = 'fallback0.01$';
+                  
+                  if (useBonusPrice && isFinite(bonusPriceUnits)) {
+                    // Явная покупка бонуса через флаг
                     bet = bonusPriceUnits;
-                    console.log(`[OFFLINE] Using ${lastMode} bonus price from UI/game objects (Label):`, bonusPrice, '$ =', bonusPriceUnits, 'units');
+                    betSource = 'forcedBonusPriceUI';
                   } else if (isFinite(__offlineRequestedBet)) {
-                    // Проверяем, не является ли amount из запроса базовой ставкой
-                    // Если amount слишком мал (меньше ожидаемой цены бонуса), это скорее всего базовая ставка
-                    const expectedMinPrice = (lastMode === 'chaos' ? 50 : 3) * currencyFactor; // Минимальная ожидаемая цена бонуса
-                    if (__offlineRequestedBet >= expectedMinPrice) {
-                      // amount выглядит как цена бонуса
-                      bet = __offlineRequestedBet;
-                      console.log(`[OFFLINE] Using ${lastMode} bonus amount from request (looks like bonus price):`, __offlineRequestedBet, 'units =', __offlineRequestedBet / currencyFactor, '$');
-                    } else {
-                      // amount слишком мал, скорее всего это базовая ставка, используем расчет или fallback
-                      if (isFinite(lastBaseBet) && lastBaseBet > 0) {
-                        bet = Math.round(lastBaseBet * multiplier);
-                        console.log(`[OFFLINE] Request amount (${__offlineRequestedBet / currencyFactor}$) seems like base bet, calculating ${lastMode} from base:`, lastBaseBet / currencyFactor, '$ *', multiplier, '=', bet / currencyFactor, '$');
-                      } else {
-                        // Используем amount, но предупреждаем
-                        bet = __offlineRequestedBet;
-                        console.log(`[OFFLINE] Using ${lastMode} bonus amount from request (may be incorrect):`, __offlineRequestedBet, 'units =', __offlineRequestedBet / currencyFactor, '$');
-                      }
-                    }
+                    // Используем amount из запроса (нормализуем)
+                    bet = normalizeBetUnits(__offlineRequestedBet, lastMode);
+                    betSource = 'requestAmount';
+                  } else if (isFinite(uiBetUnits)) {
+                    // Используем ставку из UI (нормализуем)
+                    bet = normalizeBetUnits(uiBetUnits, lastMode);
+                    betSource = 'uiBet';
                   } else if (isFinite(lastBaseBet) && lastBaseBet > 0) {
-                    // Рассчитываем на основе базовой ставки
-                    bet = Math.round(lastBaseBet * multiplier);
-                    console.log(`[OFFLINE] Calculating ${lastMode} bonus price from base bet:`, lastBaseBet / currencyFactor, '$ *', multiplier, '=', bet / currencyFactor, '$ (', bet, 'units)');
+                    // Используем последнюю базовую ставку (нормализуем)
+                    bet = normalizeBetUnits(lastBaseBet, lastMode);
+                    betSource = 'lastBaseBet';
                   } else {
-                    // Fallback значения (фиксированные)
-                    const fallbackPrice = lastMode === 'chaos' ? 100 : 5;
-                    bet = fallbackPrice * currencyFactor;
-                    console.log(`[OFFLINE] ${lastMode} bonus price not found, using fallback ${fallbackPrice}$`);
+                    // Fallback: минимальная ставка для режима
+                    bet = normalizeBetUnits(Math.round(0.01 * currencyFactor), lastMode);
+                  }
+                  
+                  if (!isEndRound) {
+                    try {
+                      const toUsd = (v) => (isFinite(v) ? (v / currencyFactor).toFixed(2) : 'NaN');
+                      console.log(`[OFFLINE][BET] mode=${lastMode} source=${betSource} req=$${toUsd(__offlineRequestedBet)} ui=$${toUsd(uiBetUnits)} bonusUI=$${toUsd(bonusPriceUnits)} useBonusPrice=${useBonusPrice} -> bet=$${toUsd(bet)}`);
+                    } catch(_) {}
                   }
                 } else {
                   // BASE режим - сохраняем ставку для расчета бонусов
                   if (isFinite(__offlineRequestedBet)) {
-                    bet = __offlineRequestedBet; // уже в единицах бекенда
+                    bet = normalizeBetUnits(__offlineRequestedBet, 'BASE');
                     try { localStorage.setItem('OFFLINE_LAST_BASE_BET', String(bet)); } catch (_) {}
                   } else if (isFinite(uiBetUnits)) {
-                    bet = uiBetUnits;
+                    bet = normalizeBetUnits(uiBetUnits, 'BASE');
                     try { localStorage.setItem('OFFLINE_LAST_BASE_BET', String(bet)); } catch (_) {}
                   } else if (isFinite(betFromMock)) {
-                    bet = betFromMock;
+                    bet = normalizeBetUnits(betFromMock, 'BASE');
                     try { localStorage.setItem('OFFLINE_LAST_BASE_BET', String(bet)); } catch (_) {}
                   } else {
-                    bet = 1 * currencyFactor;
+                    bet = normalizeBetUnits(Math.round(0.01 * currencyFactor), 'BASE');
                     try { localStorage.setItem('OFFLINE_LAST_BASE_BET', String(bet)); } catch (_) {}
                   }
                 }
                 try { localStorage.setItem('OFFLINE_LAST_BET', String(bet)); } catch (_) {}
-                const payoutField = parsed?.round?.payout;
-                const mult = Number(parsed?.round?.payoutMultiplier);
-                const payout = typeof payoutField === 'number' && isFinite(payoutField)
-                  ? payoutField
-                  : (isFinite(bet) && isFinite(mult) ? Math.round(bet * mult) : NaN);
+                // Динамический перерасчёт выигрыша от ставки: игнорируем жёстко зашитые суммы из моков
+                let payout;
+                try {
+                  const payoutField = parsed?.round?.payout;
+                  const multField = Number(parsed?.round?.payoutMultiplier);
+                  const mockAmount = Number(parsed?.round?.amount);
+                  // Выбираем актуальную ставку для расчёта: приоритет — вычисленная bet
+                  const effectiveBet = isFinite(bet) ? bet : (isFinite(mockAmount) ? mockAmount : NaN);
+                  // Определяем множитель: 1) из мока; 2) по отношению payout/mockAmount; 3) сохранённый для режима; 4) дефолт/override
+                  let effectiveMultiplier = NaN;
+                  let multiplierSource = 'default';
+                  if (isFinite(multField) && multField > 0) {
+                    effectiveMultiplier = multField;
+                    multiplierSource = 'mockMultiplier';
+                  } else {
+                    const payoutFromMock = Number(payoutField);
+                    if (isFinite(payoutFromMock) && isFinite(mockAmount) && mockAmount > 0) {
+                      effectiveMultiplier = payoutFromMock / mockAmount;
+                      multiplierSource = 'derivedFromMockPayout';
+                    }
+                  }
+                  if (!isFinite(effectiveMultiplier) || effectiveMultiplier <= 0) {
+                    // Пробуем взять сохранённый множитель для текущего режима
+                    try {
+                      const saved = Number(localStorage.getItem('OFFLINE_LAST_MULTIPLIER_' + String(lastMode || 'base').toUpperCase()));
+                      if (isFinite(saved) && saved > 0) {
+                        effectiveMultiplier = saved;
+                        multiplierSource = 'savedMultiplier';
+                      }
+                    } catch (_) {}
+                  }
+                  if (!isFinite(effectiveMultiplier) || effectiveMultiplier <= 0) {
+                    // Позволяем переопределить дефолт
+                    let defaultMult = 5.0;
+                    try {
+                      const override = Number(localStorage.getItem('OFFLINE_DEFAULT_MULTIPLIER'));
+                      if (isFinite(override) && override > 0) defaultMult = override;
+                    } catch (_) {}
+                    effectiveMultiplier = defaultMult;
+                  }
+                  // Разрешаем только явный override множителя, без клампа
+                  try {
+                    const modeKey = String(lastMode || 'base').toUpperCase();
+                    const override = Number(localStorage.getItem('OFFLINE_PAYOUT_MULT_' + modeKey));
+                    if (isFinite(override) && override > 0) {
+                      effectiveMultiplier = override;
+                      multiplierSource = 'overrideByMode';
+                    }
+                  } catch (_) {}
+                  if (isFinite(effectiveBet)) {
+                    payout = Math.round(effectiveBet * effectiveMultiplier);
+                    // Принудительно обновляем поля ответа, чтобы UI видел корректные значения
+                    if (parsed && parsed.round && typeof parsed.round === 'object') {
+                      parsed.round.amount = effectiveBet;
+                      parsed.round.payoutMultiplier = effectiveMultiplier;
+                      parsed.round.payout = payout;
+                      // Синхронизируем типичные алиасы выигрыша, если они присутствуют в структуре
+                      const aliasKeys = ['win', 'winnings', 'totalWin', 'total_winnings', 'prize', 'sumWin'];
+                      for (const k of aliasKeys) {
+                        if (k in parsed.round && typeof parsed.round[k] === 'number') {
+                          parsed.round[k] = payout;
+                        }
+                      }
+                    }
+                    // Сохраняем использованный множитель для текущего режима
+                    try { localStorage.setItem('OFFLINE_LAST_MULTIPLIER_' + String(lastMode || 'base').toUpperCase(), String(effectiveMultiplier)); } catch (_) {}
+                    try {
+                      const betUsd = (effectiveBet / currencyFactor).toFixed(2);
+                      const payoutUsd = (payout / currencyFactor).toFixed(2);
+                      console.log('[OFFLINE][PAYOUT] bet(units)=', effectiveBet, 'bet($)=', betUsd, 'mult=', effectiveMultiplier, '(' + multiplierSource + ')', '=> payout(units)=', payout, 'payout($)=', payoutUsd);
+                    } catch(_) {}
+                  } else {
+                    payout = Number(payoutField);
+                  }
+                } catch(_) {
+                  // fallback к прежней логике при любой ошибке
+                  const payoutField = parsed?.round?.payout;
+                  const mult = Number(parsed?.round?.payoutMultiplier);
+                  payout = (typeof payoutField === 'number' && isFinite(payoutField)) ? payoutField : (isFinite(bet) && isFinite(mult) ? Math.round(bet * mult) : NaN);
+                }
 
                 if (isSessionStart) {
                   // Жёстко инициализируем локальный баланс при старте сессии
@@ -1250,8 +1364,62 @@
                   let next = base;
                   // Списываем ставку, если известна
                   if (isFinite(bet)) {
-                    next = Math.max(0, base - bet);
+                    try {
+                      const toUsd = (v) => (isFinite(v) ? (v / currencyFactor).toFixed(2) : 'NaN');
+                      console.log('[OFFLINE][BALANCE] before(units)=', base, 'before($)=', toUsd(base), 'bet(units)=', bet, 'bet($)=', toUsd(bet));
+                    } catch(_) {}
+                    // Для chaos mode при покупке бонуски умножаем ставку на 100
+                    // Для ante mode при покупке бонуски умножаем ставку на 5
+                    let actualBet = bet;
+                    let isBonusPurchase = false;
+                    let bonusMultiplier = 1;
+                    
+                    if ((lastMode === 'chaos' || lastMode === 'ante') && !isEndRound) {
+                      // Проверяем, что это покупка бонуски: проверяем и флаг, и сравнение ставки с ценой бонуса
+                      let useBonusPrice = false;
+                      try { useBonusPrice = String(localStorage.getItem('OFFLINE_USE_BONUS_PRICE') || '').trim() === '1'; } catch (_) {}
+                      
+                      // Определяем покупку бонуса: либо через флаг, либо если ставка меньше цены бонуса (т.к. при покупке бонуса запрашивается минимальная ставка)
+                      if (useBonusPrice) {
+                        isBonusPurchase = true;
+                      } else {
+                        try {
+                          const detectedBonusPrice = __offlineGetBonusPrice(lastMode);
+                          const bonusPriceUnits = isFinite(detectedBonusPrice) ? Math.round(detectedBonusPrice * currencyFactor) : NaN;
+                          // Если ставка меньше цены бонуса, значит это покупка бонуса (запрашивается минимальная ставка, но списывается цена бонуса)
+                          if (isFinite(bonusPriceUnits) && bet < bonusPriceUnits) {
+                            isBonusPurchase = true;
+                          }
+                        } catch(_) {}
+                      }
+                      
+                      // Определяем множитель для списания: chaos = 100, ante = 5
+                      if (isBonusPurchase) {
+                        bonusMultiplier = lastMode === 'chaos' ? 100 : 5;
+                      }
+                      
+                      try {
+                        const toUsd = (v) => (isFinite(v) ? (v / currencyFactor).toFixed(2) : 'NaN');
+                        const detectedBonusPrice = __offlineGetBonusPrice(lastMode);
+                        const bonusPriceUnits = isFinite(detectedBonusPrice) ? Math.round(detectedBonusPrice * currencyFactor) : NaN;
+                        console.log('[OFFLINE][BALANCE] ' + lastMode + ' mode check: isBonusPurchase=', isBonusPurchase, 'useBonusPrice=', useBonusPrice, 'bet=$' + toUsd(bet) + ', bonusPriceUnits=$' + toUsd(bonusPriceUnits) + ', bonusMultiplier=' + bonusMultiplier);
+                      } catch(_) {}
+                    }
+                    // Умножаем списание: chaos mode на 100, ante mode на 5
+                    let deduction = actualBet;
+                    if ((lastMode === 'chaos' || lastMode === 'ante') && !isEndRound && isBonusPurchase) {
+                      deduction = actualBet * bonusMultiplier;
+                    }
+                    try {
+                      const toUsd = (v) => (isFinite(v) ? (v / currencyFactor).toFixed(2) : 'NaN');
+                      console.log('[OFFLINE][BALANCE] Deduction calculation: isBonusPurchase=', isBonusPurchase, 'actualBet=$' + toUsd(actualBet) + ', deduction=$' + toUsd(deduction));
+                    } catch(_) {}
+                    next = Math.max(0, base - deduction);
                     try { localStorage.setItem('OFFLINE_BALANCE', String(next)); } catch (_) {}
+                    try {
+                      const toUsd = (v) => (isFinite(v) ? (v / currencyFactor).toFixed(2) : 'NaN');
+                      console.log('[OFFLINE][BALANCE] after(units)=', next, 'after($)=', toUsd(next));
+                    } catch(_) {}
                   } else {
                     // Без ставки сохраняем текущий локальный баланс (если его ещё нет)
                     if (!isFinite(stored) || stored <= 0) {
@@ -1263,15 +1431,43 @@
                     parsed.balance.amount = next;
                     body = JSON.stringify(parsed);
                   }
-                  // Кешируем возможный payout для прибавления на end-round
-                  if (isFinite(payout)) {
+                  // Кешируем возможный payout для прибавления на end-round (только если payout > 0, т.е. выигрыш)
+                  if (isFinite(payout) && payout > 0) {
                     try { localStorage.setItem('OFFLINE_LAST_PAYOUT', String(payout)); } catch (_) {}
+                  } else {
+                    // При поражении очищаем кеш payout
+                    try { localStorage.removeItem('OFFLINE_LAST_PAYOUT'); } catch (_) {}
                   }
                 } else if (isEndRound) {
-                  // На завершении прибавляем только payout из кеша
+                  // На завершении проверяем payout из ответа - если он есть и > 0, это выигрыш
+                  let actualPayout = 0;
+                  try {
+                    const payoutFromResponse = Number(parsed?.round?.payout);
+                    if (isFinite(payoutFromResponse) && payoutFromResponse > 0) {
+                      actualPayout = payoutFromResponse;
+                    } else {
+                      // Проверяем win в metaTags
+                      const state = parsed?.round?.state?.[0];
+                      if (state?.metaTags && Array.isArray(state.metaTags)) {
+                        for (const tag of state.metaTags) {
+                          if (tag.name === 'win' && tag.value) {
+                            const winValue = Number(tag.value);
+                            if (isFinite(winValue) && winValue > 0) {
+                              actualPayout = Math.round(winValue * currencyFactor);
+                              break;
+                            }
+                          }
+                        }
+                      }
+                    }
+                  } catch(_) {}
+                  
+                  // Используем payout из ответа, если он есть, иначе из кеша
                   const lastPayoutRaw = localStorage.getItem('OFFLINE_LAST_PAYOUT');
-                  const lastPayout = lastPayoutRaw !== null ? Number(lastPayoutRaw) : null;
-                  if (isFinite(stored) && isFinite(lastPayout)) {
+                  const lastPayout = actualPayout > 0 ? actualPayout : (lastPayoutRaw !== null ? Number(lastPayoutRaw) : 0);
+                  
+                  // Добавляем payout только если он > 0 (т.е. это выигрыш)
+                  if (isFinite(stored) && isFinite(lastPayout) && lastPayout > 0) {
                     const finalBalance = Math.max(0, Math.round(stored + lastPayout));
                     if (parsed && parsed.balance && typeof parsed.balance === 'object') {
                       parsed.balance.amount = finalBalance;
@@ -1279,12 +1475,23 @@
                     }
                     try { localStorage.setItem('OFFLINE_BALANCE', String(finalBalance)); } catch (_) {}
                     try { localStorage.removeItem('OFFLINE_LAST_PAYOUT'); } catch (_) {}
+                    try {
+                      const lastPayoutUsd = (lastPayout / currencyFactor).toFixed(2);
+                      const finalUsd = (finalBalance / currencyFactor).toFixed(2);
+                      console.log('[OFFLINE][END-ROUND] stored(units)=', stored, 'lastPayout(units)=', lastPayout, '=> final(units)=', finalBalance, '| lastPayout($)=', lastPayoutUsd, 'final($)=', finalUsd);
+                    } catch(_) {}
                   } else if (isFinite(stored)) {
-                    // Нет payout — просто отражаем сохранённый баланс
+                    // Нет payout или payout = 0 (поражение) — просто отражаем сохранённый баланс
                     if (parsed && parsed.balance && typeof parsed.balance === 'object') {
                       parsed.balance.amount = stored;
                       body = JSON.stringify(parsed);
                     }
+                    try { localStorage.setItem('OFFLINE_BALANCE', String(stored)); } catch (_) {}
+                    try { localStorage.removeItem('OFFLINE_LAST_PAYOUT'); } catch (_) {}
+                    try {
+                      const finalUsd = (stored / currencyFactor).toFixed(2);
+                      console.log('[OFFLINE][END-ROUND] No payout (loss), balance=', stored, '($' + finalUsd + ')');
+                    } catch(_) {}
                   }
                 }
               } catch (e) { console.warn('[OFFLINE] staged balance adjust failed:', e); }
