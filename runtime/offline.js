@@ -193,6 +193,113 @@
   
   // Перехват fetch для API моков
   const originalFetch = window.fetch;
+  // === RTP/Volatility helpers ===
+  function __rtp_getTarget() {
+    let target = 0.96;
+    try {
+      const v = Number(localStorage.getItem('OFFLINE_TARGET_RTP'));
+      if (isFinite(v) && v > 0 && v < 5) target = v;
+    } catch (_) {}
+    return target;
+  }
+  function __rtp_getTier() {
+    let tier = 1; // 1 = низкая волатильность (частые мелкие выигрыши)
+    try {
+      const v = Number(localStorage.getItem('OFFLINE_VOLATILITY_TIER'));
+      if (isFinite(v) && v >= 1 && v <= 5) tier = Math.round(v);
+    } catch (_) {}
+    return tier;
+  }
+  function __rtp_enabled() {
+    try {
+      const flag = String(localStorage.getItem('OFFLINE_USE_RTP_DIST') || '1').trim();
+      return flag === '1' || flag.toLowerCase() === 'true';
+    } catch (_) { return true; }
+  }
+  function __rtp_pickOutcome(outcomes) {
+    const r = Math.random();
+    let acc = 0;
+    for (let i = 0; i < outcomes.length; i++) {
+      acc += outcomes[i].p;
+      if (r <= acc) return outcomes[i];
+    }
+    return outcomes[outcomes.length - 1];
+  }
+  function __rtp_calibrate(outcomes, targetMean) {
+    // Нормируем суммы вероятностей
+    let sumP = outcomes.reduce((s, o) => s + o.p, 0);
+    if (sumP <= 0) return outcomes;
+    outcomes = outcomes.map(o => ({ mult: o.mult, p: o.p / sumP }));
+    // Текущий RTP
+    const cur = outcomes.reduce((s, o) => s + o.p * o.mult, 0);
+    let diff = targetMean - cur;
+    if (Math.abs(diff) < 1e-6) return outcomes;
+    // Корректируем последнюю положительную категорию за счёт нулевой
+    const zeroIdx = outcomes.findIndex(o => o.mult === 0);
+    let posIdx = -1;
+    for (let i = outcomes.length - 1; i >= 0; i--) {
+      if (outcomes[i].mult > 0) { posIdx = i; break; }
+    }
+    if (posIdx >= 0) {
+      const m = outcomes[posIdx].mult;
+      const deltaP = diff / (m || 1);
+      const newPos = Math.max(0, outcomes[posIdx].p + deltaP);
+      const d = newPos - outcomes[posIdx].p;
+      outcomes[posIdx] = { mult: outcomes[posIdx].mult, p: newPos };
+      if (zeroIdx >= 0) {
+        outcomes[zeroIdx] = { mult: 0, p: Math.max(0, outcomes[zeroIdx].p - d) };
+      }
+      // Финальная нормировка
+      sumP = outcomes.reduce((s, o) => s + o.p, 0);
+      outcomes = outcomes.map(o => ({ mult: o.mult, p: o.p / (sumP || 1) }));
+    }
+    return outcomes;
+  }
+  function __rtp_outcomes_for_tier(tier) {
+    // Наборы для 1..5 (1 = низкая волатильность)
+    const presets = {
+      1: [ // частые мелкие выигрыши
+        { mult: 0,   p: 0.06 },
+        { mult: 0.5, p: 0.18 },
+        { mult: 0.8, p: 0.22 },
+        { mult: 1.0, p: 0.29 },
+        { mult: 1.5, p: 0.15 },
+        { mult: 2.0, p: 0.10 }
+      ],
+      2: [
+        { mult: 0,   p: 0.20 },
+        { mult: 0.5, p: 0.22 },
+        { mult: 1.0, p: 0.25 },
+        { mult: 1.5, p: 0.18 },
+        { mult: 2.0, p: 0.10 },
+        { mult: 3.0, p: 0.05 }
+      ],
+      3: [
+        { mult: 0,   p: 0.40 },
+        { mult: 0.5, p: 0.20 },
+        { mult: 1.0, p: 0.18 },
+        { mult: 2.0, p: 0.12 },
+        { mult: 5.0, p: 0.07 },
+        { mult: 10,  p: 0.03 }
+      ],
+      4: [
+        { mult: 0,   p: 0.62 },
+        { mult: 0.5, p: 0.18 },
+        { mult: 1.0, p: 0.10 },
+        { mult: 2.0, p: 0.07 },
+        { mult: 10,  p: 0.02 },
+        { mult: 20,  p: 0.01 }
+      ],
+      5: [ // экстремально высокая
+        { mult: 0,   p: 0.80 },
+        { mult: 1.0, p: 0.12 },
+        { mult: 3.0, p: 0.06 },
+        { mult: 25,  p: 0.019 },
+        { mult: 100, p: 0.001 }
+      ]
+    };
+    return presets[tier] || presets[1];
+  }
   // Хелпер: попытка считать ставку из UI (текст вида "Bet $X.XX")
   function __offlineGetUiBet() {
     try {
@@ -1259,7 +1366,23 @@
                       multiplierSource = 'derivedFromMockPayout';
                     }
                   }
-                  if (!isFinite(effectiveMultiplier) || effectiveMultiplier <= 0) {
+                  // Если включено управление RTP/волатильностью — используем собственное распределение множителей
+                  let usedRtpDistribution = false;
+                  try {
+                    if (__rtp_enabled()) {
+                      const tier = __rtp_getTier();
+                      const target = __rtp_getTarget();
+                      let outcomes = __rtp_outcomes_for_tier(tier);
+                      outcomes = __rtp_calibrate(outcomes, target);
+                      const pick = __rtp_pickOutcome(outcomes);
+                      if (pick && isFinite(pick.mult) && pick.mult >= 0) {
+                        effectiveMultiplier = pick.mult;
+                        multiplierSource = 'rtpDistribution_tier' + tier;
+                        usedRtpDistribution = true;
+                      }
+                    }
+                  } catch (_) {}
+                  if (!usedRtpDistribution && (!isFinite(effectiveMultiplier) || effectiveMultiplier <= 0)) {
                     // Пробуем взять сохранённый множитель для текущего режима
                     try {
                       const saved = Number(localStorage.getItem('OFFLINE_LAST_MULTIPLIER_' + String(lastMode || 'base').toUpperCase()));
