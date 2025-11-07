@@ -383,13 +383,8 @@
     }
 
     function resetSessionOnReloadIfNeeded() {
-      let urlSource = null;
-      try {
-        urlSource = sessionStorage.getItem('LAST_SESSION_URL_SOURCE');
-      } catch (_) {}
-
       const navigationType = getNavigationType();
-      const shouldReset = navigationType === 'reload' && urlSource !== 'external';
+      const shouldReset = navigationType === 'reload';
 
       if (shouldReset) {
         skipCachedSessions = true;
@@ -415,10 +410,6 @@
           console.warn('[GAME] ⚠️ Не удалось сбросить параметры сессии при перезагрузке:', resetError);
         }
       }
-
-      try {
-        sessionStorage.removeItem('LAST_SESSION_URL_SOURCE');
-      } catch (_) {}
 
       return shouldReset;
     }
@@ -621,11 +612,6 @@
       } catch (urlError) {
         console.warn('[GAME] ⚠️ Не удалось обновить URL родительской страницы:', urlError);
       }
-
-      try {
-        const sourceFlag = source === '🔗 URL session' ? 'external' : 'auto';
-        sessionStorage.setItem('LAST_SESSION_URL_SOURCE', sourceFlag);
-      } catch (_) {}
 
       let postMessageAttempts = 0;
       const maxAttempts = 10;
