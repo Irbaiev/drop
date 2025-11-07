@@ -328,6 +328,27 @@
     // Получаем новый sessionID при каждой загрузке страницы
     const iframe = document.getElementById('game-frame');
     
+    // Очищаем адресную строку родительской страницы от технических параметров
+    try {
+      const parentUrl = new URL(window.location.href);
+      const paramsToStrip = ['access_token', 'play_for_fun', 'language', 'currency', 'sessionID', 'rgs_url', '_t'];
+      let stripped = false;
+      paramsToStrip.forEach(param => {
+        if (parentUrl.searchParams.has(param)) {
+          parentUrl.searchParams.delete(param);
+          stripped = true;
+        }
+      });
+      if (stripped) {
+        const cleanSearch = parentUrl.searchParams.toString();
+        const cleanUrl = parentUrl.pathname + (cleanSearch ? '?' + cleanSearch : '');
+        window.history.replaceState({}, '', cleanUrl);
+        console.log('[GAME] 🧹 Адресная строка очищена от служебных параметров');
+      }
+    } catch (e) {
+      console.warn('[GAME] ⚠️ Не удалось очистить адресную строку:', e);
+    }
+
     // Обновляем iframe с уникальным access_token
     const currentSrc = iframe.src;
     const url = new URL(currentSrc, window.location.href);
@@ -418,6 +439,33 @@
       console.log('[GAME] 🔑 sessionID в URL:', params.get('sessionID') ? params.get('sessionID').substring(0, 20) + '...' : 'ОТСУТСТВУЕТ!');
       console.log('[GAME] 🌐 Полный URL iframe:', finalUrl);
       
+      // Обновляем адресную строку родителя в формате, как на оригинальном сайте
+      try {
+        const parentUrl = new URL(window.location.href);
+        const allowedParams = ['sessionID', 'rgs_url', 'lang', 'currency', 'device', 'social', 'demo'];
+        let parentUpdated = false;
+        allowedParams.forEach(key => {
+          const value = params.get(key);
+          if (value !== null && value !== undefined) {
+            if (parentUrl.searchParams.get(key) !== value) {
+              parentUrl.searchParams.set(key, value);
+              parentUpdated = true;
+            }
+          } else if (parentUrl.searchParams.has(key)) {
+            parentUrl.searchParams.delete(key);
+            parentUpdated = true;
+          }
+        });
+        if (parentUpdated) {
+          const cleanParentSearch = parentUrl.searchParams.toString();
+          const cleanParentUrl = parentUrl.pathname + (cleanParentSearch ? '?' + cleanParentSearch : '');
+          window.history.replaceState({}, '', cleanParentUrl);
+          console.log('[GAME] 🔗 Адрес родителя обновлён параметрами сессии');
+        }
+      } catch (e) {
+        console.warn('[GAME] ⚠️ Не удалось обновить адрес родителя:', e);
+      }
+
       // Делаем sessionID доступным для iframe через window.top (без localStorage)
       window.__OFFLINE_SESSION_DATA = {
         sessionID: sessionData.sessionID,
