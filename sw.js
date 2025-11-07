@@ -22,16 +22,35 @@ const inject = `<script>(function(){
   if (!location.search) {
     // Пытаемся получить токен из localStorage (новый ключ для пользовательского токена)
     let token = '';
+    let storedLang = 'en';
     try {
       // Сначала пробуем новый ключ для пользовательского токена
       token = localStorage.getItem('OFFLINE_USER_ACCESS_TOKEN') || 
               localStorage.getItem('OFFLINE_REAL_API_ACCESS_TOKEN') || '';
+      storedLang = localStorage.getItem('LAST_LANG') || storedLang;
     } catch(e) {}
+    const qs = new URLSearchParams();
     if (token) {
-      history.replaceState(null,'',location.pathname+'?access_token='+encodeURIComponent(token)+'&play_for_fun=true&language=en&currency=USD');
+      qs.set('access_token', token);
     } else {
-      history.replaceState(null,'',location.pathname+'?'+GAME_QS_FALLBACK);
+      GAME_QS_FALLBACK.split('&').forEach(pair => {
+        const [k,v] = pair.split('=');
+        if (k) qs.set(k, v || '');
+      });
     }
+    if (!qs.has('lang')) {
+      qs.set('lang', storedLang);
+    }
+    if (!qs.has('language')) {
+      qs.set('language', qs.get('lang'));
+    }
+    if (!qs.has('currency')) {
+      qs.set('currency', 'USD');
+    }
+    if (!qs.has('play_for_fun')) {
+      qs.set('play_for_fun', 'true');
+    }
+    history.replaceState(null,'',location.pathname+'?'+qs.toString());
   }
   
   // 0.5) Добавляем sessionID в URL, если он есть в localStorage, но отсутствует в URL
@@ -39,6 +58,17 @@ const inject = `<script>(function(){
   try {
     const urlParams = new URLSearchParams(location.search);
     const urlSessionID = urlParams.get('sessionID');
+    const currentLang = urlParams.get('lang') || urlParams.get('language');
+    if (currentLang) {
+      urlParams.set('lang', currentLang);
+      urlParams.set('language', currentLang);
+    } else {
+      const storedLang = localStorage.getItem('LAST_LANG');
+      if (storedLang) {
+        urlParams.set('lang', storedLang);
+        urlParams.set('language', storedLang);
+      }
+    }
     
     if (urlSessionID) {
       // Если sessionID есть в URL, обновляем localStorage (новый sessionID имеет приоритет)
@@ -47,6 +77,11 @@ const inject = `<script>(function(){
       if (rgsUrl) {
         localStorage.setItem('LAST_RGS_URL', rgsUrl);
       }
+      const langToSave = urlParams.get('lang') || urlParams.get('language');
+      if (langToSave) {
+        localStorage.setItem('LAST_LANG', langToSave);
+      }
+      history.replaceState(null, '', location.pathname + '?' + urlParams.toString());
       console.log('[OFFLINE] ✅ Using sessionID from URL:', urlSessionID.substring(0, 20) + '...');
     } else {
       // Если sessionID нет в URL, пробуем взять из localStorage
@@ -56,6 +91,11 @@ const inject = `<script>(function(){
         const savedRgsUrl = localStorage.getItem('LAST_RGS_URL');
         if (savedRgsUrl && !urlParams.has('rgs_url')) {
           urlParams.set('rgs_url', savedRgsUrl);
+        }
+        const storedLang = localStorage.getItem('LAST_LANG');
+        if (storedLang) {
+          urlParams.set('lang', storedLang);
+          urlParams.set('language', storedLang);
         }
         const newSearch = urlParams.toString();
         history.replaceState(null, '', location.pathname + '?' + newSearch);
@@ -415,12 +455,11 @@ self.addEventListener('fetch', (e) => {
         
         return response.text().then(html => {
           const injected = html.replace('</head>', injectScript + '</head>');
-          const newResponse = new Response(injected, { headers: response.headers });
-          // Сохраняем оригинальный URL в заголовке для отладки
+          const clonedHeaders = new Headers(response.headers);
           if (queryString) {
-            newResponse.headers.set('X-Original-Query', queryString);
+            clonedHeaders.set('X-Original-Query', queryString);
           }
-          return newResponse;
+          return new Response(injected, { headers: clonedHeaders });
         });
       }).catch(() => caches.match(e.request))
     );

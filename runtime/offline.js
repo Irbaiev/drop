@@ -555,12 +555,17 @@ try {
               console.log('[OFFLINE] ✅ Successfully fetched fresh sessionID from API:', apiData.sessionID.substring(0, 20) + '...');
               
               // Сохраняем полученные данные
+              const apiLang = apiData.lang || apiData.language || language;
               try {
                 localStorage.setItem('OFFLINE_REAL_API_SESSION_ID', String(apiData.sessionID));
                 const normalizedRgs = apiData.rgs_url.startsWith('http') ? apiData.rgs_url : `https://${apiData.rgs_url}`;
                 localStorage.setItem('OFFLINE_REAL_API_URL', normalizedRgs.replace(/\/$/, ''));
                 if (apiData.currency) {
                   localStorage.setItem('OFFLINE_REAL_API_CURRENCY', apiData.currency);
+                }
+                if (apiLang) {
+                  localStorage.setItem('OFFLINE_REAL_API_LANGUAGE', apiLang);
+                  localStorage.setItem('LAST_LANG', apiLang);
                 }
               } catch (_) {}
               
@@ -569,6 +574,10 @@ try {
               newParams.set('sessionID', String(apiData.sessionID));
               newParams.set('rgs_url', apiData.rgs_url);
               if (apiData.currency) newParams.set('currency', apiData.currency);
+              if (apiLang) {
+                newParams.set('lang', apiLang);
+                newParams.set('language', apiLang);
+              }
               const newUrl = window.location.pathname + '?' + newParams.toString();
               try { history.replaceState(null, '', newUrl); } catch (_) {}
               
@@ -641,12 +650,31 @@ try {
         return;
       }
       
+      const language = (() => {
+        try {
+          const explicit = urlParams.get('lang') || urlParams.get('language');
+          if (explicit && explicit.trim()) return explicit.trim();
+        } catch (_) {}
+        try {
+          const stored = localStorage.getItem('LAST_LANG') || localStorage.getItem('OFFLINE_REAL_API_LANGUAGE');
+          if (stored && stored.trim()) return stored.trim();
+        } catch (_) {}
+        if (navigator && typeof navigator.language === 'string') {
+          return navigator.language.split('-')[0];
+        }
+        return 'en';
+      })();
+
       const currency = urlParams.get('currency') || localStorage.getItem('OFFLINE_REAL_API_CURRENCY') || 'USD';
       const gameIDParam = urlParams.get('gameID') || '0196ecd0-c06c-74ca-9bc9-e6b3310f1651';
       
-      // Сохраняем currency в localStorage
+      // Сохраняем currency и язык в localStorage
       try {
         localStorage.setItem('OFFLINE_REAL_API_CURRENCY', currency);
+        if (language) {
+          localStorage.setItem('OFFLINE_REAL_API_LANGUAGE', language);
+          localStorage.setItem('LAST_LANG', language);
+        }
       } catch (_) {}
 
       // ПРИОРИТЕТ 2: Стартуем новую сессию через /session/start (fallback, если API не настроен или не сработал)
@@ -671,7 +699,12 @@ try {
           const headers1 = new Headers({ 
             'Content-Type': 'text/plain'
           });
-          const body1 = JSON.stringify({ gameID: gameIDParam, currency });
+          const basePayload = { gameID: gameIDParam, currency };
+          if (language) {
+            basePayload.language = language;
+            basePayload.lang = language;
+          }
+          const body1 = JSON.stringify(basePayload);
           
           console.log('[OFFLINE] 🔍 Trying /session/start on', base);
           console.log('[OFFLINE] 🔍 Request body:', body1);
@@ -691,7 +724,8 @@ try {
             if (accessToken) {
               console.log('[OFFLINE] 🔍 Retrying /session/start on', base, 'with access_token in body');
               const headers2 = new Headers({ 'Content-Type': 'text/plain' });
-              const body2 = JSON.stringify({ gameID: gameIDParam, access_token: accessToken, currency });
+              const body2Payload = { ...basePayload, access_token: accessToken };
+              const body2 = JSON.stringify(body2Payload);
               const res2 = nativeFetchFn ? await nativeFetchFn(url, {
                 method: 'POST',
                 headers: headers2,
@@ -756,6 +790,10 @@ try {
         // если не распарсили — оставим как есть
       }
       newParams.set('currency', currency);
+      if (language) {
+        newParams.set('lang', language);
+        newParams.set('language', language);
+      }
       newParams.delete('access_token'); // Убираем access_token из URL (он сохранён в localStorage)
 
       const newUrl = window.location.pathname + '?' + newParams.toString();

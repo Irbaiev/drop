@@ -30,7 +30,7 @@
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'x-language': 'ru',
+            'x-language': preferredLang,
             'x-operation-name': 'StartThirdPartyDemoSession',
             'x-operation-type': 'query',
             'Origin': 'https://stake.com',
@@ -137,7 +137,17 @@
       const sessionID = url.searchParams.get('sessionID');
       const rgsUrl = url.searchParams.get('rgs_url');
       const currency = url.searchParams.get('currency') || 'USD';
-      const lang = url.searchParams.get('lang') || 'ru';
+      const requestedLang = (() => {
+        try {
+          const search = new URLSearchParams(window.location.search);
+          return search.get('lang') || search.get('language');
+        } catch (e) {
+          console.warn('[GAME] ⚠️ Не удалось определить язык из URL при парсинге config:', e);
+          return null;
+        }
+      })();
+      const configLang = url.searchParams.get('lang') || url.searchParams.get('language');
+      const lang = requestedLang || configLang || preferredLang || 'en';
       
       if (!sessionID || !rgsUrl) {
         throw new Error('sessionID or rgs_url not found in config URL');
@@ -324,8 +334,148 @@
     
     // Получаем или создаем уникальный access_token для пользователя
     const userToken = getOrCreateUserAccessToken();
-    
     const iframe = document.getElementById('game-frame');
+    let skipCachedSessions = false;
+
+    function getPreferredLang() {
+      try {
+        const search = new URLSearchParams(window.location.search);
+        if (search.has('lang')) {
+          return search.get('lang') || 'en';
+        }
+        if (search.has('language')) {
+          return search.get('language') || 'en';
+        }
+      } catch (e) {
+        console.warn('[GAME] ⚠️ Не удалось прочитать язык из URL:', e);
+      }
+      try {
+        const stored = localStorage.getItem('LAST_LANG');
+        if (stored) {
+          return stored;
+        }
+      } catch (_) {}
+      return 'en';
+    }
+
+    function getNavigationType() {
+      try {
+        if (typeof performance !== 'undefined' && performance.getEntriesByType) {
+          const entries = performance.getEntriesByType('navigation');
+          if (entries && entries.length > 0) {
+            return entries[0].type || 'navigate';
+          }
+        }
+      } catch (_) {}
+      try {
+        if (typeof performance !== 'undefined' && performance.navigation) {
+          switch (performance.navigation.type) {
+            case performance.navigation.TYPE_RELOAD:
+              return 'reload';
+            case performance.navigation.TYPE_BACK_FORWARD:
+              return 'back_forward';
+            default:
+              return 'navigate';
+          }
+        }
+      } catch (_) {}
+      return 'navigate';
+    }
+
+    function resetSessionOnReloadIfNeeded() {
+      let urlSource = null;
+      try {
+        urlSource = sessionStorage.getItem('LAST_SESSION_URL_SOURCE');
+      } catch (_) {}
+
+      const navigationType = getNavigationType();
+      const shouldReset = navigationType === 'reload' && urlSource !== 'external';
+
+      if (shouldReset) {
+        skipCachedSessions = true;
+        try {
+          const params = new URLSearchParams(window.location.search);
+          const hadSession = params.has('sessionID') || params.has('rgs_url');
+          if (hadSession) {
+            params.delete('sessionID');
+            params.delete('rgs_url');
+            params.delete('access_token');
+            params.delete('_t');
+            params.delete('play_for_fun');
+            params.delete('demo');
+            params.delete('social');
+            params.delete('device');
+            const newQuery = params.toString();
+            const newUrl = window.location.pathname + (newQuery ? '?' + newQuery : '');
+            history.replaceState({}, '', newUrl);
+            console.log('[GAME] 🔄 Обнаружен reload — очищаю параметры прошлой сессии');
+          }
+        } catch (resetError) {
+          console.warn('[GAME] ⚠️ Не удалось сбросить параметры сессии при перезагрузке:', resetError);
+        }
+      }
+
+      try {
+        sessionStorage.removeItem('LAST_SESSION_URL_SOURCE');
+      } catch (_) {}
+
+      return shouldReset;
+    }
+
+    const reloadSessionReset = resetSessionOnReloadIfNeeded();
+    if (reloadSessionReset) {
+      console.log('[GAME] ♻️ Свежая сессия будет получена после перезагрузки');
+    }
+
+    const preferredLang = getPreferredLang();
+
+    function launchFromCurrentUrl() {
+      try {
+        if (skipCachedSessions) {
+          return false;
+        }
+        const search = new URLSearchParams(window.location.search);
+        const sessionID = search.get('sessionID');
+        const rgsUrl = search.get('rgs_url');
+        if (!sessionID || !rgsUrl) {
+          return false;
+        }
+        const lang = search.get('lang') || search.get('language') || preferredLang;
+        const currency = search.get('currency') || 'USD';
+        const device = search.get('device') || 'desktop';
+        const social = search.get('social') || 'false';
+        const demo = search.get('demo') || 'true';
+        const baseUrl = 'mirror/mirror-image-gaming.live.stake-engine.com/drop-the-boss/v10/index.__q_57679522.html';
+        const params = new URLSearchParams();
+        params.set('sessionID', sessionID);
+        params.set('rgs_url', rgsUrl);
+        params.set('lang', lang);
+        params.set('language', lang);
+        params.set('currency', currency);
+        params.set('device', device);
+        params.set('social', social);
+        params.set('demo', demo);
+        const finalUrl = `${baseUrl}?${params.toString()}`;
+        const sessionInfo = {
+          finalUrl,
+          baseUrl,
+          sessionID,
+          rgsUrl,
+          lang,
+          currency,
+          device,
+          social,
+          demo,
+          source: '🔗 URL session'
+        };
+        console.log('[GAME] ▶ Используем sessionID из URL:', sessionID.substring(0, 20) + '...');
+        const applied = prepareIframeWithSession(sessionInfo);
+        return applied;
+      } catch (e) {
+        console.warn('[GAME] ⚠️ Не удалось использовать параметры из URL:', e);
+        return false;
+      }
+    }
 
     function buildSessionFromConfig(configUrlString, sourceLabel = 'API session') {
       try {
@@ -352,13 +502,42 @@
 
         const sessionID = configUrl.searchParams.get('sessionID');
         const rgsUrl = configUrl.searchParams.get('rgs_url') || 'rgs.twist-rgs.com';
+        const requestedLang = (() => {
+          try {
+            const currentSearch = new URLSearchParams(window.location.search);
+            return currentSearch.get('lang') || currentSearch.get('language');
+          } catch (e) {
+            console.warn('[GAME] ⚠️ Не удалось прочитать язык из URL при сборке config:', e);
+            return null;
+          }
+        })();
+        const storedLang = (() => {
+          try {
+            return localStorage.getItem('LAST_LANG');
+          } catch (_) {
+            return null;
+          }
+        })();
+        const configLang = configUrl.searchParams.get('lang')
+          || configUrl.searchParams.get('language');
+        const lang = requestedLang || configLang || storedLang || preferredLang;
+        const currency = configUrl.searchParams.get('currency') || 'USD';
+        const device = configUrl.searchParams.get('device') || 'desktop';
+        const social = configUrl.searchParams.get('social') || 'false';
+        const demo = configUrl.searchParams.get('demo')
+          || (configUrl.searchParams.has('play_for_fun') ? (configUrl.searchParams.get('play_for_fun') === 'true' ? 'true' : 'false') : 'true');
+
         const baseUrl = `mirror/${configUrl.hostname}${pathname}/${gameFile}`;
 
-        const params = new URLSearchParams(configUrl.search);
-        params.set('access_token', userToken.accessToken);
+        const params = new URLSearchParams();
         if (sessionID) params.set('sessionID', sessionID);
         if (rgsUrl) params.set('rgs_url', rgsUrl);
-        params.set('_t', Date.now().toString());
+        params.set('lang', lang);
+        params.set('language', lang);
+        params.set('currency', currency);
+        params.set('device', device);
+        params.set('social', social);
+        params.set('demo', demo);
 
         const finalUrl = `${baseUrl}?${params.toString()}`;
 
@@ -367,8 +546,11 @@
           baseUrl,
           sessionID,
           rgsUrl,
-          currency: configUrl.searchParams.get('currency') || 'USD',
-          lang: configUrl.searchParams.get('lang') || 'en',
+          currency,
+          lang,
+          device,
+          social,
+          demo,
           configUrlString,
           source: sourceLabel
         };
@@ -415,14 +597,25 @@
         if (sessionInfo.configUrlString) {
           localStorage.setItem('LAST_CONFIG_URL', sessionInfo.configUrlString);
         }
+        localStorage.setItem('LAST_LANG', sessionInfo.lang || preferredLang);
+        if (sessionInfo.currency) localStorage.setItem('LAST_CURRENCY', sessionInfo.currency);
+        if (sessionInfo.device) localStorage.setItem('LAST_DEVICE', sessionInfo.device);
+        if (sessionInfo.social) localStorage.setItem('LAST_SOCIAL', sessionInfo.social);
+        if (sessionInfo.demo) localStorage.setItem('LAST_DEMO', sessionInfo.demo);
       } catch (storageError) {
         console.warn('[GAME] ⚠️ Не удалось сохранить данные сессии в localStorage:', storageError);
       }
 
       try {
-        const parentParams = new URLSearchParams(window.location.search);
+        const parentParams = new URLSearchParams();
         parentParams.set('sessionID', sessionID);
         if (rgsUrl) parentParams.set('rgs_url', rgsUrl);
+        parentParams.set('lang', sessionInfo.lang || localStorage.getItem('LAST_LANG') || preferredLang);
+        parentParams.set('language', sessionInfo.lang || localStorage.getItem('LAST_LANG') || preferredLang);
+        parentParams.set('currency', sessionInfo.currency || localStorage.getItem('LAST_CURRENCY') || 'USD');
+        parentParams.set('device', sessionInfo.device || localStorage.getItem('LAST_DEVICE') || 'desktop');
+        parentParams.set('social', sessionInfo.social || localStorage.getItem('LAST_SOCIAL') || 'false');
+        parentParams.set('demo', sessionInfo.demo || localStorage.getItem('LAST_DEMO') || 'true');
         const newParentUrl = window.location.pathname + '?' + parentParams.toString();
         if (newParentUrl !== window.location.pathname + window.location.search) {
           window.history.replaceState({}, '', newParentUrl);
@@ -430,6 +623,11 @@
       } catch (urlError) {
         console.warn('[GAME] ⚠️ Не удалось обновить URL родительской страницы:', urlError);
       }
+
+      try {
+        const sourceFlag = source === '🔗 URL session' ? 'external' : 'auto';
+        sessionStorage.setItem('LAST_SESSION_URL_SOURCE', sourceFlag);
+      } catch (_) {}
 
       let postMessageAttempts = 0;
       const maxAttempts = 10;
@@ -488,6 +686,7 @@
         console.log('[GAME] ✅ Iframe src установлен');
       }
 
+      skipCachedSessions = false;
       return true;
     }
 
@@ -502,17 +701,44 @@
       if (storedIframeUrl) {
         try {
           const resolved = new URL(storedIframeUrl, window.location.href);
+          resolved.searchParams.delete('access_token');
+          resolved.searchParams.delete('_t');
           const sessionID = resolved.searchParams.get('sessionID') || localStorage.getItem('LAST_SESSION_ID');
           if (!sessionID) return null;
-          resolved.searchParams.set('access_token', userToken.accessToken);
-          resolved.searchParams.set('_t', Date.now().toString());
-          const rgsUrl = resolved.searchParams.get('rgs_url') || localStorage.getItem('LAST_RGS_URL') || '';
-          const finalUrl = resolved.pathname + resolved.search;
+
+          const lang = resolved.searchParams.get('lang')
+            || resolved.searchParams.get('language')
+            || preferredLang;
+          const currency = resolved.searchParams.get('currency') || 'USD';
+          const device = resolved.searchParams.get('device') || 'desktop';
+          const social = resolved.searchParams.get('social') || 'false';
+          const demo = resolved.searchParams.get('demo')
+            || (resolved.searchParams.has('play_for_fun') ? (resolved.searchParams.get('play_for_fun') === 'true' ? 'true' : 'false') : 'true');
+          const rgsUrl = resolved.searchParams.get('rgs_url') || localStorage.getItem('LAST_RGS_URL') || 'rgs.twist-rgs.com';
+
+          const params = new URLSearchParams();
+          params.set('sessionID', sessionID);
+          if (rgsUrl) params.set('rgs_url', rgsUrl);
+          params.set('lang', lang);
+          params.set('language', lang);
+          params.set('currency', currency);
+          params.set('device', device);
+          params.set('social', social);
+          params.set('demo', demo);
+
+          const basePath = resolved.pathname.startsWith('/') ? resolved.pathname.slice(1) : resolved.pathname;
+          const finalUrl = `${basePath}?${params.toString()}`;
+
           return {
             finalUrl,
-            baseUrl: finalUrl.split('?')[0],
+            baseUrl: basePath,
             sessionID,
             rgsUrl,
+            lang,
+            currency,
+            device,
+            social,
+            demo,
             source: '📂 Cached iframe session'
           };
         } catch (err) {
@@ -549,70 +775,83 @@
       const baseUrl = 'mirror/mirror-image-gaming.live.stake-engine.com/drop-the-boss/v10/index.__q_57679522.html';
       console.warn('[GAME] ⚠️ Используется упрощенный fallback без sessionID');
       const params = new URLSearchParams({
-        access_token: userToken.accessToken,
-        play_for_fun: 'true',
-        language: 'en',
+        lang: preferredLang,
+        language: preferredLang,
         currency: 'USD',
-        _t: Date.now().toString()
+        device: 'desktop',
+        social: 'false',
+        demo: 'true'
       });
       iframe.src = `${baseUrl}?${params.toString()}`;
     }
 
-    // Обновляем iframe с уникальным access_token
-    const currentSrc = iframe.src;
-    const url = new URL(currentSrc, window.location.href);
-    url.searchParams.set('access_token', userToken.accessToken);
-    iframe.src = url.toString();
-    
-    // Очищаем старый sessionID из URL родительской страницы
+    // Очищаем URL родительской страницы от временных параметров access_token/play_for_fun
     try {
       const urlParams = new URLSearchParams(window.location.search);
-      if (urlParams.has('sessionID')) {
-        urlParams.delete('sessionID');
-        urlParams.delete('rgs_url');
-        const newUrl = window.location.pathname + (urlParams.toString() ? '?' + urlParams.toString() : '');
+      let updated = false;
+      if (urlParams.has('access_token')) {
+        urlParams.delete('access_token');
+        updated = true;
+      }
+      if (urlParams.has('play_for_fun')) {
+        urlParams.delete('play_for_fun');
+        updated = true;
+      }
+      if (urlParams.has('_t')) {
+        urlParams.delete('_t');
+        updated = true;
+      }
+      if (updated) {
+        const newQuery = urlParams.toString();
+        const newUrl = window.location.pathname + (newQuery ? '?' + newQuery : '');
         window.history.replaceState({}, '', newUrl);
-        console.log('[GAME] 🗑️ Удален старый sessionID из URL родительской страницы');
+        console.log('[GAME] 🗑️ Очищены временные параметры из URL родительской страницы');
       }
     } catch (e) {
       console.warn('[GAME] ⚠️ Не удалось очистить URL:', e);
     }
     
-    // Пробуем получить новый sessionID через GraphQL API
-    getNewSessionFromStakeAPI().then(sessionData => {
-      console.log('[GAME] ✅ Успешно получен новый sessionID!');
-      const sessionInfo = buildSessionFromConfig(sessionData.fullUrl, '🌐 Stake GraphQL session');
-      if (sessionInfo) {
-        sessionInfo.currency = sessionData.currency;
-        sessionInfo.lang = sessionData.lang;
-        prepareIframeWithSession(sessionInfo);
-      } else {
-        console.warn('[GAME] ⚠️ Не удалось сформировать данные сессии из ответа API, используем резервные варианты');
-        throw new Error('Invalid session config');
-      }
-    }).catch(async err => {
-      console.warn('[GAME] ⚠️ Не удалось получить sessionID через API, ищем локальные варианты:', err);
+    // Пробуем получить sessionID из текущего URL
+    const hasDirectSession = launchFromCurrentUrl();
 
-      const reusedSession = tryReuseStoredSession();
-      if (reusedSession) {
-        console.log('[GAME] ♻️ Используем ранее сохраненную сессию');
-        const applied = prepareIframeWithSession(reusedSession);
-        if (applied) {
-          return;
+    if (!hasDirectSession) {
+      // Пробуем получить новый sessionID через GraphQL API
+      getNewSessionFromStakeAPI().then(sessionData => {
+        console.log('[GAME] ✅ Успешно получен новый sessionID!');
+        const sessionInfo = buildSessionFromConfig(sessionData.fullUrl, '🌐 Stake GraphQL session');
+        if (sessionInfo) {
+          sessionInfo.currency = sessionData.currency;
+          sessionInfo.lang = sessionData.lang;
+          prepareIframeWithSession(sessionInfo);
+        } else {
+          console.warn('[GAME] ⚠️ Не удалось сформировать данные сессии из ответа API, используем резервные варианты');
+          throw new Error('Invalid session config');
         }
-      }
+      }).catch(async err => {
+        console.warn('[GAME] ⚠️ Не удалось получить sessionID через API, ищем локальные варианты:', err);
+        skipCachedSessions = false;
 
-      const mirrorSession = await fetchMirrorFallbackSession();
-      if (mirrorSession) {
-        console.log('[GAME] 🪞 Используем sessionID из mirrorIndex.json');
-        const applied = prepareIframeWithSession(mirrorSession);
-        if (applied) {
-          return;
+        const reusedSession = skipCachedSessions ? null : tryReuseStoredSession();
+        if (reusedSession) {
+          console.log('[GAME] ♻️ Используем ранее сохраненную сессию');
+          const applied = prepareIframeWithSession(reusedSession);
+          if (applied) {
+            return;
+          }
         }
-      }
 
-      applySimpleFallback();
-    });
+        const mirrorSession = skipCachedSessions ? null : await fetchMirrorFallbackSession();
+        if (mirrorSession) {
+          console.log('[GAME] 🪞 Используем sessionID из mirrorIndex.json');
+          const applied = prepareIframeWithSession(mirrorSession);
+          if (applied) {
+            return;
+          }
+        }
+
+        applySimpleFallback();
+      });
+    }
     
     function resizeIframe() {
       iframe.style.width = window.innerWidth + 'px';

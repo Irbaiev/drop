@@ -2,16 +2,42 @@
 <html>
 <head>
 <script>
-// ⚡ CRITICAL: Выполняется ДО загрузки game scripts
-if (!location.search.includes('access_token')) {
+// ⚡ CRITICAL: выполняется ДО загрузки game scripts
+const params = new URLSearchParams(location.search);
+let mutated = false;
+if (!params.has('access_token')) {
     const token = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzZXNzaW9uIjp7InBsYXllcklkIjoiZGVtbzp0b3BzcGluLXN0d2FsbGV0OjExMzU0MDc3IiwiZ2FtZUlkIjoidHMtdGctcGFwZXJwbGFuZSIsImlzUGxheUZvckZ1biI6dHJ1ZSwiY3VycmVuY3kiOiJVU0QiLCJmb3JjZUNvbmZpZyI6IiIsImlwQWRkcmVzcyI6Ijc4LjQwLjExNi4xMzYiLCJzdWJQYXJ0bmVySUQiOiIiLCJjYWxsQmFja1VSTCI6IiJ9fQ.LOsJIU1o3dul065zHwLrKXI4UPMoVcE1wfmwLwfjBKA';
-    const params = new URLSearchParams(location.search);
     params.set('access_token', token);
     params.set('play_for_fun', 'true');
-    params.set('language', 'en');
+    mutated = true;
+}
+const incomingLang = params.get('lang') || params.get('language');
+if (incomingLang) {
+    if (params.get('lang') !== incomingLang) {
+        params.set('lang', incomingLang);
+        mutated = true;
+    }
+    if (params.get('language') !== incomingLang) {
+        params.set('language', incomingLang);
+        mutated = true;
+    }
+} else {
+    if (!params.has('lang')) {
+        params.set('lang', 'en');
+        mutated = true;
+    }
+    if (!params.has('language')) {
+        params.set('language', params.get('lang'));
+        mutated = true;
+    }
+}
+if (!params.has('currency')) {
     params.set('currency', 'USD');
+    mutated = true;
+}
+if (mutated) {
     history.replaceState(null, '', location.pathname + '?' + params.toString());
-    console.log('[OFFLINE] Added access_token to URL');
+    console.log('[OFFLINE] Updated URL bootstrap parameters');
 }
 </script>
   <meta charset="utf-8">
