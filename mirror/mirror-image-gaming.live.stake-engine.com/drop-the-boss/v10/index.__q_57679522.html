@@ -17,19 +17,15 @@ if (incomingLang) {
         params.set('lang', incomingLang);
         mutated = true;
     }
-    if (params.get('language') !== incomingLang) {
-        params.set('language', incomingLang);
-        mutated = true;
-    }
 } else {
     if (!params.has('lang')) {
         params.set('lang', 'en');
         mutated = true;
     }
-    if (!params.has('language')) {
-        params.set('language', params.get('lang'));
-        mutated = true;
-    }
+}
+if (params.has('language')) {
+    params.delete('language');
+    mutated = true;
 }
 if (!params.has('currency')) {
     params.set('currency', 'USD');

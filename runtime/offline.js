@@ -576,7 +576,6 @@ try {
               if (apiData.currency) newParams.set('currency', apiData.currency);
               if (apiLang) {
                 newParams.set('lang', apiLang);
-                newParams.set('language', apiLang);
               }
               const newUrl = window.location.pathname + '?' + newParams.toString();
               try { history.replaceState(null, '', newUrl); } catch (_) {}
@@ -792,7 +791,6 @@ try {
       newParams.set('currency', currency);
       if (language) {
         newParams.set('lang', language);
-        newParams.set('language', language);
       }
       newParams.delete('access_token'); // Убираем access_token из URL (он сохранён в localStorage)
 

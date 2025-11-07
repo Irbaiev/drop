@@ -2,7 +2,7 @@
 const CACHE_NAME = 'drop-the-boss-v1';
 // GAME_QS теперь генерируется динамически в index.html, поэтому здесь используем шаблон
 // Если токен не найден в запросе, будет использован этот fallback
-const GAME_QS_FALLBACK = 'access_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzZXNzaW9uIjp7InBsYXllcklkIjoiZGVtbzp0b3BzcGluLXN0d2FsbGV0OjExMzU0MDc3IiwiZ2FtZUlkIjoidHMtdGctcGFwZXJwbGFuZSIsImlzUGxheUZvckZ1biI6dHJ1ZSwiY3VycmVuY3kiOiJVU0QiLCJmb3JjZUNvbmZpZyI6IiIsImlwQWRkcmVzcyI6Ijc4LjQwLjExNi4xMzYiLCJzdWJQYXJ0bmVySUQiOiIiLCJjYWxsQmFja1VSTCI6IiJ9fQ.LOsJIU1o3dul065zHwLrKXI4UPMoVcE1wfmwLwfjBKA&play_for_fun=true&language=en&currency=USD';
+const GAME_QS_FALLBACK = 'access_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzZXNzaW9uIjp7InBsYXllcklkIjoiZGVtbzp0b3BzcGluLXN0d2FsbGV0OjExMzU0MDc3IiwiZ2FtZUlkIjoidHMtdGctcGFwZXJwbGFuZSIsImlzUGxheUZvckZ1biI6dHJ1ZSwiY3VycmVuY3kiOiJVU0QiLCJmb3JjZUNvbmZpZyI6IiIsImlwQWRkcmVzcyI6Ijc4LjQwLjExNi4xMzYiLCJzdWJQYXJ0bmVySUQiOiIiLCJjYWxsQmFja1VSTCI6IiJ9fQ.LOsJIU1o3dul065zHwLrKXI4UPMoVcE1wfmwLwfjBKA&play_for_fun=true&currency=USD';
 
 // Расширенный список аналитики для блокировки
 const ANALYTICS = [
@@ -41,9 +41,6 @@ const inject = `<script>(function(){
     if (!qs.has('lang')) {
       qs.set('lang', storedLang);
     }
-    if (!qs.has('language')) {
-      qs.set('language', qs.get('lang'));
-    }
     if (!qs.has('currency')) {
       qs.set('currency', 'USD');
     }
@@ -61,12 +58,10 @@ const inject = `<script>(function(){
     const currentLang = urlParams.get('lang') || urlParams.get('language');
     if (currentLang) {
       urlParams.set('lang', currentLang);
-      urlParams.set('language', currentLang);
     } else {
       const storedLang = localStorage.getItem('LAST_LANG');
       if (storedLang) {
         urlParams.set('lang', storedLang);
-        urlParams.set('language', storedLang);
       }
     }
     
@@ -95,7 +90,6 @@ const inject = `<script>(function(){
         const storedLang = localStorage.getItem('LAST_LANG');
         if (storedLang) {
           urlParams.set('lang', storedLang);
-          urlParams.set('language', storedLang);
         }
         const newSearch = urlParams.toString();
         history.replaceState(null, '', location.pathname + '?' + newSearch);

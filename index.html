@@ -399,6 +399,7 @@
           if (hadSession) {
             params.delete('sessionID');
             params.delete('rgs_url');
+            params.delete('language');
             params.delete('access_token');
             params.delete('_t');
             params.delete('play_for_fun');
@@ -450,7 +451,6 @@
         params.set('sessionID', sessionID);
         params.set('rgs_url', rgsUrl);
         params.set('lang', lang);
-        params.set('language', lang);
         params.set('currency', currency);
         params.set('device', device);
         params.set('social', social);
@@ -533,7 +533,6 @@
         if (sessionID) params.set('sessionID', sessionID);
         if (rgsUrl) params.set('rgs_url', rgsUrl);
         params.set('lang', lang);
-        params.set('language', lang);
         params.set('currency', currency);
         params.set('device', device);
         params.set('social', social);
@@ -611,7 +610,6 @@
         parentParams.set('sessionID', sessionID);
         if (rgsUrl) parentParams.set('rgs_url', rgsUrl);
         parentParams.set('lang', sessionInfo.lang || localStorage.getItem('LAST_LANG') || preferredLang);
-        parentParams.set('language', sessionInfo.lang || localStorage.getItem('LAST_LANG') || preferredLang);
         parentParams.set('currency', sessionInfo.currency || localStorage.getItem('LAST_CURRENCY') || 'USD');
         parentParams.set('device', sessionInfo.device || localStorage.getItem('LAST_DEVICE') || 'desktop');
         parentParams.set('social', sessionInfo.social || localStorage.getItem('LAST_SOCIAL') || 'false');
@@ -720,7 +718,6 @@
           params.set('sessionID', sessionID);
           if (rgsUrl) params.set('rgs_url', rgsUrl);
           params.set('lang', lang);
-          params.set('language', lang);
           params.set('currency', currency);
           params.set('device', device);
           params.set('social', social);
@@ -776,7 +773,6 @@
       console.warn('[GAME] ⚠️ Используется упрощенный fallback без sessionID');
       const params = new URLSearchParams({
         lang: preferredLang,
-        language: preferredLang,
         currency: 'USD',
         device: 'desktop',
         social: 'false',
