@@ -2,7 +2,7 @@
 const CACHE_NAME = 'drop-the-boss-v1';
 // GAME_QS теперь генерируется динамически в index.html, поэтому здесь используем шаблон
 // Если токен не найден в запросе, будет использован этот fallback
-const GAME_QS_FALLBACK = 'access_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzZXNzaW9uIjp7InBsYXllcklkIjoiZGVtbzp0b3BzcGluLXN0d2FsbGV0OjExMzU0MDc3IiwiZ2FtZUlkIjoidHMtdGctcGFwZXJwbGFuZSIsImlzUGxheUZvckZ1biI6dHJ1ZSwiY3VycmVuY3kiOiJVU0QiLCJmb3JjZUNvbmZpZyI6IiIsImlwQWRkcmVzcyI6Ijc4LjQwLjExNi4xMzYiLCJzdWJQYXJ0bmVySUQiOiIiLCJjYWxsQmFja1VSTCI6IiJ9fQ.LOsJIU1o3dul065zHwLrKXI4UPMoVcE1wfmwLwfjBKA&play_for_fun=true&currency=USD';
+const GAME_QS_FALLBACK = 'access_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzZXNzaW9uIjp7InBsYXllcklkIjoiZGVtbzp0b3BzcGluLXN0d2FsbGV0OjExMzU0MDc3IiwiZ2FtZUlkIjoidHMtdGctcGFwZXJwbGFuZSIsImlzUGxheUZvckZ1biI6dHJ1ZSwiY3VycmVuY3kiOiJVU0QiLCJmb3JjZUNvbmZpZyI6IiIsImlwQWRkcmVzcyI6Ijc4LjQwLjExNi4xMzYiLCJzdWJQYXJ0bmVySUQiOiIiLCJjYWxsQmFja1VSTCI6IiJ9fQ.LOsJIU1o3dul065zHwLrKXI4UPMoVcE1wfmwLwfjBKA&play_for_fun=true&language=en&currency=USD';
 
 // Расширенный список аналитики для блокировки
 const ANALYTICS = [
@@ -22,32 +22,16 @@ const inject = `<script>(function(){
   if (!location.search) {
     // Пытаемся получить токен из localStorage (новый ключ для пользовательского токена)
     let token = '';
-    let storedLang = 'en';
     try {
       // Сначала пробуем новый ключ для пользовательского токена
       token = localStorage.getItem('OFFLINE_USER_ACCESS_TOKEN') || 
               localStorage.getItem('OFFLINE_REAL_API_ACCESS_TOKEN') || '';
-      storedLang = localStorage.getItem('LAST_LANG') || storedLang;
     } catch(e) {}
-    const qs = new URLSearchParams();
     if (token) {
-      qs.set('access_token', token);
+      history.replaceState(null,'',location.pathname+'?access_token='+encodeURIComponent(token)+'&play_for_fun=true&language=en&currency=USD');
     } else {
-      GAME_QS_FALLBACK.split('&').forEach(pair => {
-        const [k,v] = pair.split('=');
-        if (k) qs.set(k, v || '');
-      });
+      history.replaceState(null,'',location.pathname+'?'+GAME_QS_FALLBACK);
     }
-    if (!qs.has('lang')) {
-      qs.set('lang', storedLang);
-    }
-    if (!qs.has('currency')) {
-      qs.set('currency', 'USD');
-    }
-    if (!qs.has('play_for_fun')) {
-      qs.set('play_for_fun', 'true');
-    }
-    history.replaceState(null,'',location.pathname+'?'+qs.toString());
   }
   
   // 0.5) Добавляем sessionID в URL, если он есть в localStorage, но отсутствует в URL
@@ -55,15 +39,6 @@ const inject = `<script>(function(){
   try {
     const urlParams = new URLSearchParams(location.search);
     const urlSessionID = urlParams.get('sessionID');
-    const currentLang = urlParams.get('lang') || urlParams.get('language');
-    if (currentLang) {
-      urlParams.set('lang', currentLang);
-    } else {
-      const storedLang = localStorage.getItem('LAST_LANG');
-      if (storedLang) {
-        urlParams.set('lang', storedLang);
-      }
-    }
     
     if (urlSessionID) {
       // Если sessionID есть в URL, обновляем localStorage (новый sessionID имеет приоритет)
@@ -72,33 +47,48 @@ const inject = `<script>(function(){
       if (rgsUrl) {
         localStorage.setItem('LAST_RGS_URL', rgsUrl);
       }
-      const langToSave = urlParams.get('lang') || urlParams.get('language');
-      if (langToSave) {
-        localStorage.setItem('LAST_LANG', langToSave);
-      }
-      history.replaceState(null, '', location.pathname + '?' + urlParams.toString());
       console.log('[OFFLINE] ✅ Using sessionID from URL:', urlSessionID.substring(0, 20) + '...');
     } else {
-      // Если sessionID нет в URL, пробуем взять из localStorage
-      const savedSessionID = localStorage.getItem('LAST_SESSION_ID');
-      if (savedSessionID && savedSessionID.trim()) {
-        urlParams.set('sessionID', savedSessionID.trim());
-        const savedRgsUrl = localStorage.getItem('LAST_RGS_URL');
-        if (savedRgsUrl && !urlParams.has('rgs_url')) {
-          urlParams.set('rgs_url', savedRgsUrl);
+      // Пробуем получить sessionID из window.top (родительский контекст может его пробросить напрямую)
+      let topSession = null;
+      try {
+        if (window.top && window.top !== window && window.top.__OFFLINE_SESSION_DATA) {
+          topSession = window.top.__OFFLINE_SESSION_DATA;
         }
-        const storedLang = localStorage.getItem('LAST_LANG');
-        if (storedLang) {
-          urlParams.set('lang', storedLang);
+      } catch(_){ topSession = null; }
+      
+      if (topSession && topSession.sessionID) {
+        urlParams.set('sessionID', topSession.sessionID);
+        if (topSession.rgsUrl) {
+          urlParams.set('rgs_url', topSession.rgsUrl);
         }
-        const newSearch = urlParams.toString();
-        history.replaceState(null, '', location.pathname + '?' + newSearch);
-        console.log('[OFFLINE] ✅ Added sessionID to URL from localStorage:', savedSessionID.substring(0, 20) + '...');
-        console.log('[OFFLINE] 🔍 Updated URL:', location.href.substring(0, 150) + '...');
+        if (topSession.currency && !urlParams.has('currency')) {
+          urlParams.set('currency', topSession.currency);
+        }
+        const newSearchTop = urlParams.toString();
+        history.replaceState(null, '', location.pathname + '?' + newSearchTop);
+        console.log('[OFFLINE] ✅ Adopted sessionID from window.top:', topSession.sessionID.substring(0, 20) + '...');
+        try {
+          localStorage.setItem('LAST_SESSION_ID', topSession.sessionID);
+          if (topSession.rgsUrl) localStorage.setItem('LAST_RGS_URL', topSession.rgsUrl);
+        } catch(_){ }
       } else {
-        console.warn('[OFFLINE] ⚠️ No sessionID in URL and localStorage. Game may not work correctly.');
+        // Если sessionID нет в URL, пробуем взять из localStorage
+        const savedSessionID = localStorage.getItem('LAST_SESSION_ID');
+        if (savedSessionID && savedSessionID.trim()) {
+          urlParams.set('sessionID', savedSessionID.trim());
+          const savedRgsUrl = localStorage.getItem('LAST_RGS_URL');
+          if (savedRgsUrl && !urlParams.has('rgs_url')) {
+            urlParams.set('rgs_url', savedRgsUrl);
+          }
+          const newSearch = urlParams.toString();
+          history.replaceState(null, '', location.pathname + '?' + newSearch);
+          console.log('[OFFLINE] ✅ Added sessionID to URL from localStorage:', savedSessionID.substring(0, 20) + '...');
+          console.log('[OFFLINE] 🔍 Updated URL:', location.href.substring(0, 150) + '...');
+        } else {
+          console.warn('[OFFLINE] ⚠️ No sessionID in URL and localStorage. Game may not work correctly.');
+        }
       }
-    }
   } catch(e) {
     console.warn('[OFFLINE] ❌ Failed to add sessionID to URL:', e);
   }
@@ -449,11 +439,12 @@ self.addEventListener('fetch', (e) => {
         
         return response.text().then(html => {
           const injected = html.replace('</head>', injectScript + '</head>');
-          const clonedHeaders = new Headers(response.headers);
+          const newResponse = new Response(injected, { headers: response.headers });
+          // Сохраняем оригинальный URL в заголовке для отладки
           if (queryString) {
-            clonedHeaders.set('X-Original-Query', queryString);
+            newResponse.headers.set('X-Original-Query', queryString);
           }
-          return new Response(injected, { headers: clonedHeaders });
+          return newResponse;
         });
       }).catch(() => caches.match(e.request))
     );

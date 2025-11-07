@@ -250,20 +250,8 @@
     let sessionID = urlParams.get('sessionID') || (refParams && refParams.get('sessionID')) || (topParams && topParams.get('sessionID'));
     if (sessionID && typeof sessionID === 'string' && sessionID.trim()) {
       localStorage.setItem('OFFLINE_REAL_API_SESSION_ID', sessionID.trim());
-      // Также сохраняем под ключом LAST_SESSION_ID для совместимости с index.html
-      localStorage.setItem('LAST_SESSION_ID', sessionID.trim());
       console.log('[OFFLINE] 🔑 Auto-saved sessionID from URL to localStorage:', sessionID.trim());
     }
-    
-    // Также проверяем LAST_SESSION_ID из localStorage и синхронизируем с OFFLINE_REAL_API_SESSION_ID
-    try {
-      const lastSessionID = localStorage.getItem('LAST_SESSION_ID');
-      if (lastSessionID && lastSessionID.trim() && !sessionID) {
-        // Если sessionID есть в LAST_SESSION_ID, но нет в URL, используем его
-        localStorage.setItem('OFFLINE_REAL_API_SESSION_ID', lastSessionID.trim());
-        console.log('[OFFLINE] 🔑 Synced LAST_SESSION_ID to OFFLINE_REAL_API_SESSION_ID:', lastSessionID.trim());
-      }
-    } catch (e) {}
     
     // Сохраняем currency (если только в referrer/top)
     let currency = urlParams.get('currency') || (refParams && refParams.get('currency')) || (topParams && topParams.get('currency'));
@@ -271,102 +259,22 @@
       try { localStorage.setItem('OFFLINE_REAL_API_CURRENCY', currency.trim()); } catch (_) {}
     }
     
-  // Включаем реальный API по умолчанию, если флаг не установлен явно
-  const useRealApiFlag = localStorage.getItem('OFFLINE_USE_REAL_API');
-  if (useRealApiFlag === null) {
-    // Если флаг не установлен, включаем по умолчанию
-    localStorage.setItem('OFFLINE_USE_REAL_API', '1');
-    console.log('[OFFLINE] ✅ Auto-enabled real API mode (default)');
-  }
-} catch (e) {
-  console.warn('[OFFLINE] Failed to auto-save URL parameters:', e);
-}
-
-// Обработчик postMessage для получения sessionID от родительского окна
-try {
-  window.addEventListener('message', function(event) {
-    // Проверяем, что сообщение содержит sessionID
-    if (event.data && typeof event.data === 'object' && event.data.type === 'SET_SESSION_ID') {
-      const { sessionID, rgsUrl, accessToken, force } = event.data;
-      
-      if (sessionID && typeof sessionID === 'string' && sessionID.trim()) {
-        const trimmedSessionID = sessionID.trim();
-        
-        // Сохраняем sessionID в оба ключа для совместимости
-        try {
-          localStorage.setItem('OFFLINE_REAL_API_SESSION_ID', trimmedSessionID);
-          localStorage.setItem('LAST_SESSION_ID', trimmedSessionID);
-          console.log('[OFFLINE] 🎧 Received sessionID via postMessage:', trimmedSessionID.substring(0, 20) + '...');
-          
-          // Если rgsUrl тоже передан, сохраняем его
-          if (rgsUrl && typeof rgsUrl === 'string' && rgsUrl.trim()) {
-            const trimmedRgsUrl = rgsUrl.trim();
-            const normalizedRgs = trimmedRgsUrl.startsWith('http') ? trimmedRgsUrl : `https://${trimmedRgsUrl}`;
-            localStorage.setItem('OFFLINE_REAL_API_URL', normalizedRgs.replace(/\/+$/, ''));
-            localStorage.setItem('LAST_RGS_URL', trimmedRgsUrl);
-            console.log('[OFFLINE] 🎧 Received rgsUrl via postMessage:', trimmedRgsUrl);
-          }
-          
-          // Если accessToken передан, обновляем его в URL и localStorage
-          if (accessToken && typeof accessToken === 'string' && accessToken.trim()) {
-            try {
-              const urlParams = new URLSearchParams(window.location.search);
-              urlParams.set('access_token', accessToken.trim());
-              
-              // Добавляем sessionID и rgsUrl в URL, если их там нет
-              if (!urlParams.has('sessionID')) {
-                urlParams.set('sessionID', trimmedSessionID);
-              }
-              if (rgsUrl && !urlParams.has('rgs_url')) {
-                urlParams.set('rgs_url', rgsUrl.trim());
-              }
-              
-              const newUrl = window.location.pathname + '?' + urlParams.toString();
-              window.history.replaceState({}, '', newUrl);
-              console.log('[OFFLINE] 🎧 Updated URL with sessionID and access_token from postMessage');
-            } catch (e) {
-              console.warn('[OFFLINE] Failed to update URL with postMessage data:', e);
-            }
-          } else if (force || !window.location.search.includes('sessionID')) {
-            // Если force=true или sessionID нет в URL, добавляем его в URL
-            try {
-              const urlParams = new URLSearchParams(window.location.search);
-              urlParams.set('sessionID', trimmedSessionID);
-              if (rgsUrl) {
-                urlParams.set('rgs_url', rgsUrl.trim());
-              }
-              const newUrl = window.location.pathname + '?' + urlParams.toString();
-              window.history.replaceState({}, '', newUrl);
-              console.log('[OFFLINE] 🎧 Added sessionID to URL from postMessage');
-            } catch (e) {
-              console.warn('[OFFLINE] Failed to add sessionID to URL:', e);
-            }
-          }
-        } catch (e) {
-          console.error('[OFFLINE] Failed to save sessionID from postMessage:', e);
-        }
-      }
+    // Включаем реальный API по умолчанию, если флаг не установлен явно
+    const useRealApiFlag = localStorage.getItem('OFFLINE_USE_REAL_API');
+    if (useRealApiFlag === null) {
+      // Если флаг не установлен, включаем по умолчанию
+      localStorage.setItem('OFFLINE_USE_REAL_API', '1');
+      console.log('[OFFLINE] ✅ Auto-enabled real API mode (default)');
     }
-  });
-  console.log('[OFFLINE] 🎧 PostMessage listener установлен для получения sessionID от родительского окна');
-} catch (e) {
-  console.warn('[OFFLINE] Failed to setup postMessage listener:', e);
-}
+  } catch (e) {
+    console.warn('[OFFLINE] Failed to auto-save URL parameters:', e);
+  }
 
   // Если в localStorage уже есть sessionID/rgs_url, а в URL их нет — добавим их в адресную строку
   try {
     const urlParams2 = new URLSearchParams(window.location.search);
-    // Проверяем оба ключа: OFFLINE_REAL_API_SESSION_ID и LAST_SESSION_ID
-    let lsSession = localStorage.getItem('OFFLINE_REAL_API_SESSION_ID');
-    if (!lsSession) {
-      lsSession = localStorage.getItem('LAST_SESSION_ID');
-      if (lsSession) {
-        // Синхронизируем: сохраняем LAST_SESSION_ID в OFFLINE_REAL_API_SESSION_ID
-        localStorage.setItem('OFFLINE_REAL_API_SESSION_ID', lsSession);
-      }
-    }
+    const lsSession = localStorage.getItem('OFFLINE_REAL_API_SESSION_ID');
     const lsBase = localStorage.getItem('OFFLINE_REAL_API_URL');
-    const lsRgsUrl = localStorage.getItem('LAST_RGS_URL');
     const hasSessionInUrl = !!urlParams2.get('sessionID');
     const hasRgsInUrl = !!urlParams2.get('rgs_url');
     if (lsSession && !hasSessionInUrl) {
@@ -376,16 +284,7 @@ try {
       try {
         const host = new URL(lsBase).host;
         urlParams2.set('rgs_url', host);
-      } catch (_) {
-        // Если lsBase не URL, пробуем использовать как есть
-        if (!hasRgsInUrl) {
-          urlParams2.set('rgs_url', lsBase);
-        }
-      }
-    }
-    // Также проверяем LAST_RGS_URL
-    if (!hasRgsInUrl && lsRgsUrl) {
-      urlParams2.set('rgs_url', lsRgsUrl);
+      } catch (_) {}
     }
     const newUrl2 = window.location.pathname + '?' + urlParams2.toString();
     if (newUrl2 !== window.location.pathname + window.location.search) {
@@ -424,12 +323,20 @@ try {
     if (!realApiEnabled) return;
     try {
       const urlParams = new URLSearchParams(window.location.search);
-      // Флаг: принудительно создавать НОВУЮ сессию при каждой загрузке страницы
-      // По умолчанию ВКЛЮЧЕНО. Чтобы выключить: localStorage.setItem('OFFLINE_FORCE_NEW_SESSION_ON_LOAD','0')
-      let forceNewSession = true;
+      // Флаг: принудительно создавать НОВУЮ сессию при каждой загрузке страницы (на случай отладки)
+      // По умолчанию ВЫКЛЮЧЕНО. Чтобы принудительно включить fallback, установите localStorage.setItem('OFFLINE_ENABLE_SESSION_START_FALLBACK','1')
+      let forceNewSession = false;
       try {
-        const v = localStorage.getItem('OFFLINE_FORCE_NEW_SESSION_ON_LOAD');
-        if (v !== null) forceNewSession = v !== '0'; else localStorage.setItem('OFFLINE_FORCE_NEW_SESSION_ON_LOAD', '1');
+        const legacy = localStorage.getItem('OFFLINE_FORCE_NEW_SESSION_ON_LOAD');
+        if (legacy !== null) {
+          // Насильно сбрасываем старый флаг, чтобы исключить автоматические /session/start
+          localStorage.setItem('OFFLINE_FORCE_NEW_SESSION_ON_LOAD', '0');
+        }
+        const explicit = localStorage.getItem('OFFLINE_ENABLE_SESSION_START_FALLBACK');
+        forceNewSession = explicit === '1';
+        if (forceNewSession) {
+          console.warn('[OFFLINE] ⚠️ /session/start fallback ENABLED manually via OFFLINE_ENABLE_SESSION_START_FALLBACK=1');
+        }
       } catch (_) {}
       // Если НЕ принудительный режим и sessionID уже есть в URL/реферере/top — пропускаем создание новой сессии
       let sessionIdFromUrl = urlParams.get('sessionID');
@@ -494,7 +401,7 @@ try {
       // ПРИОРИТЕТ 1: Используем токен из localStorage (постоянный токен пользователя)
       try {
         accessToken = localStorage.getItem('OFFLINE_USER_ACCESS_TOKEN');
-        if (accessToken) {
+      if (accessToken) {
           console.log('[OFFLINE] 🔑 Using permanent user access_token from localStorage');
           // Обновляем URL с постоянным токеном пользователя, если он отличается
           const urlToken = urlParams.get('access_token');
@@ -515,17 +422,17 @@ try {
             localStorage.setItem('OFFLINE_USER_ACCESS_TOKEN', accessToken);
             localStorage.setItem('OFFLINE_REAL_API_ACCESS_TOKEN', accessToken); // Для совместимости
             console.log('[OFFLINE] 💾 Saved access_token from URL to localStorage (first time only)');
-          } catch (_) {}
-        } else {
+        } catch (_) {}
+      } else {
           // ПРИОРИТЕТ 3: Fallback на старый ключ для совместимости
-          try {
-            accessToken = localStorage.getItem('OFFLINE_REAL_API_ACCESS_TOKEN');
-            if (accessToken) {
+        try {
+          accessToken = localStorage.getItem('OFFLINE_REAL_API_ACCESS_TOKEN');
+          if (accessToken) {
               // Мигрируем на новый ключ
               localStorage.setItem('OFFLINE_USER_ACCESS_TOKEN', accessToken);
               console.log('[OFFLINE] 🔄 Migrated access_token to permanent storage');
-            }
-          } catch (_) {}
+          }
+        } catch (_) {}
         }
       }
       
@@ -555,17 +462,12 @@ try {
               console.log('[OFFLINE] ✅ Successfully fetched fresh sessionID from API:', apiData.sessionID.substring(0, 20) + '...');
               
               // Сохраняем полученные данные
-              const apiLang = apiData.lang || apiData.language || language;
               try {
                 localStorage.setItem('OFFLINE_REAL_API_SESSION_ID', String(apiData.sessionID));
                 const normalizedRgs = apiData.rgs_url.startsWith('http') ? apiData.rgs_url : `https://${apiData.rgs_url}`;
                 localStorage.setItem('OFFLINE_REAL_API_URL', normalizedRgs.replace(/\/$/, ''));
                 if (apiData.currency) {
                   localStorage.setItem('OFFLINE_REAL_API_CURRENCY', apiData.currency);
-                }
-                if (apiLang) {
-                  localStorage.setItem('OFFLINE_REAL_API_LANGUAGE', apiLang);
-                  localStorage.setItem('LAST_LANG', apiLang);
                 }
               } catch (_) {}
               
@@ -574,9 +476,6 @@ try {
               newParams.set('sessionID', String(apiData.sessionID));
               newParams.set('rgs_url', apiData.rgs_url);
               if (apiData.currency) newParams.set('currency', apiData.currency);
-              if (apiLang) {
-                newParams.set('lang', apiLang);
-              }
               const newUrl = window.location.pathname + '?' + newParams.toString();
               try { history.replaceState(null, '', newUrl); } catch (_) {}
               
@@ -649,34 +548,59 @@ try {
         return;
       }
       
-      const language = (() => {
-        try {
-          const explicit = urlParams.get('lang') || urlParams.get('language');
-          if (explicit && explicit.trim()) return explicit.trim();
-        } catch (_) {}
-        try {
-          const stored = localStorage.getItem('LAST_LANG') || localStorage.getItem('OFFLINE_REAL_API_LANGUAGE');
-          if (stored && stored.trim()) return stored.trim();
-        } catch (_) {}
-        if (navigator && typeof navigator.language === 'string') {
-          return navigator.language.split('-')[0];
-        }
-        return 'en';
-      })();
-
       const currency = urlParams.get('currency') || localStorage.getItem('OFFLINE_REAL_API_CURRENCY') || 'USD';
       const gameIDParam = urlParams.get('gameID') || '0196ecd0-c06c-74ca-9bc9-e6b3310f1651';
       
-      // Сохраняем currency и язык в localStorage
+      // Если sessionID уже есть в URL, не запускаем /session/start (это ломается на сторонних хостах)
+      const existingUrlSession = urlParams.get('sessionID');
+      if (existingUrlSession && existingUrlSession.trim()) {
+        console.log('[OFFLINE] ✅ sessionID already provided in URL, skipping /session/start fallback');
+        try {
+          localStorage.setItem('OFFLINE_REAL_API_SESSION_ID', existingUrlSession.trim());
+        } catch(_){ }
+        return;
+      }
+
+      // Попытка получить sessionID напрямую из window.top.__OFFLINE_SESSION_DATA
       try {
-        localStorage.setItem('OFFLINE_REAL_API_CURRENCY', currency);
-        if (language) {
-          localStorage.setItem('OFFLINE_REAL_API_LANGUAGE', language);
-          localStorage.setItem('LAST_LANG', language);
+        if (window.top && window.top !== window && window.top.__OFFLINE_SESSION_DATA) {
+          const topData = window.top.__OFFLINE_SESSION_DATA;
+          if (topData && topData.sessionID) {
+            const newParams = new URLSearchParams(window.location.search);
+            newParams.set('sessionID', topData.sessionID);
+            if (topData.rgsUrl) {
+              newParams.set('rgs_url', topData.rgsUrl);
+            }
+            if (topData.currency) {
+              newParams.set('currency', topData.currency);
+              try { localStorage.setItem('OFFLINE_REAL_API_CURRENCY', topData.currency); } catch(_) {}
+            }
+            const newUrl = window.location.pathname + '?' + newParams.toString();
+            try { history.replaceState(null, '', newUrl); } catch(_){ }
+            try {
+              localStorage.setItem('OFFLINE_REAL_API_SESSION_ID', topData.sessionID);
+              if (topData.rgsUrl) {
+                const normalizedTopRgs = topData.rgsUrl.startsWith('http') ? topData.rgsUrl : `https://${topData.rgsUrl}`;
+                localStorage.setItem('OFFLINE_REAL_API_URL', normalizedTopRgs.replace(/\/$/, ''));
+              }
+            } catch(_) {}
+            console.log('[OFFLINE] ✅ Adopted sessionID from window.top.__OFFLINE_SESSION_DATA');
+            return;
+          }
         }
       } catch (_) {}
+      
+      // Сохраняем currency в localStorage
+      try {
+        localStorage.setItem('OFFLINE_REAL_API_CURRENCY', currency);
+      } catch (_) {}
 
-      // ПРИОРИТЕТ 2: Стартуем новую сессию через /session/start (fallback, если API не настроен или не сработал)
+      if (!forceNewSession) {
+        console.log('[OFFLINE] ⏸ /session/start fallback disabled. Waiting for session from parent/localStorage.');
+        return;
+      }
+
+      // ПРИОРИТЕТ 2: Стартуем новую сессию через /session/start (fallback, если явно включено)
       // Список хостов для попыток (уникальные)
       const candidates = [];
       const current = realApiUrl.replace(/\/$/, '');
@@ -698,12 +622,7 @@ try {
           const headers1 = new Headers({ 
             'Content-Type': 'text/plain'
           });
-          const basePayload = { gameID: gameIDParam, currency };
-          if (language) {
-            basePayload.language = language;
-            basePayload.lang = language;
-          }
-          const body1 = JSON.stringify(basePayload);
+          const body1 = JSON.stringify({ gameID: gameIDParam, currency });
           
           console.log('[OFFLINE] 🔍 Trying /session/start on', base);
           console.log('[OFFLINE] 🔍 Request body:', body1);
@@ -723,8 +642,7 @@ try {
             if (accessToken) {
               console.log('[OFFLINE] 🔍 Retrying /session/start on', base, 'with access_token in body');
               const headers2 = new Headers({ 'Content-Type': 'text/plain' });
-              const body2Payload = { ...basePayload, access_token: accessToken };
-              const body2 = JSON.stringify(body2Payload);
+              const body2 = JSON.stringify({ gameID: gameIDParam, access_token: accessToken, currency });
               const res2 = nativeFetchFn ? await nativeFetchFn(url, {
                 method: 'POST',
                 headers: headers2,
@@ -789,9 +707,6 @@ try {
         // если не распарсили — оставим как есть
       }
       newParams.set('currency', currency);
-      if (language) {
-        newParams.set('lang', language);
-      }
       newParams.delete('access_token'); // Убираем access_token из URL (он сохранён в localStorage)
 
       const newUrl = window.location.pathname + '?' + newParams.toString();
@@ -1623,19 +1538,9 @@ try {
                 }
                 
                 // ПРИОРИТЕТ 2: sessionID из localStorage (если не найден в URL)
-                // Проверяем оба ключа: OFFLINE_REAL_API_SESSION_ID и LAST_SESSION_ID
                 if (!finalSessionID) {
                   try {
-                    let savedSessionID = localStorage.getItem('OFFLINE_REAL_API_SESSION_ID');
-                    if (!savedSessionID) {
-                      // Пробуем получить из LAST_SESSION_ID (используется в index.html)
-                      savedSessionID = localStorage.getItem('LAST_SESSION_ID');
-                      if (savedSessionID) {
-                        // Синхронизируем: сохраняем в OFFLINE_REAL_API_SESSION_ID для будущих запросов
-                        localStorage.setItem('OFFLINE_REAL_API_SESSION_ID', savedSessionID.trim());
-                        console.log('[OFFLINE][REAL_API] 🔄 Synced LAST_SESSION_ID to OFFLINE_REAL_API_SESSION_ID');
-                      }
-                    }
+                    const savedSessionID = localStorage.getItem('OFFLINE_REAL_API_SESSION_ID');
                     if (savedSessionID && savedSessionID.trim()) {
                       finalSessionID = savedSessionID.trim();
                     }
@@ -1656,20 +1561,7 @@ try {
                 if (requestUrl.includes('/wallet/authenticate') && !finalSessionID) {
                   console.warn('[OFFLINE][REAL_API] ⚠️ No sessionID found for /wallet/authenticate');
                   console.warn('[OFFLINE][REAL_API] 🔍 URL params:', window.location.search);
-                  console.warn('[OFFLINE][REAL_API] 🔍 localStorage OFFLINE_REAL_API_SESSION_ID:', localStorage.getItem('OFFLINE_REAL_API_SESSION_ID'));
-                  console.warn('[OFFLINE][REAL_API] 🔍 localStorage LAST_SESSION_ID:', localStorage.getItem('LAST_SESSION_ID'));
-                  
-                  // Если sessionID все еще не найден, пробуем еще раз получить из URL (возможно, он был добавлен через postMessage)
-                  // и возвращаем fallback ответ сразу, чтобы избежать ошибки 400
-                  try {
-                    const urlParamsRetry = new URLSearchParams(window.location.search);
-                    const retrySessionID = urlParamsRetry.get('sessionID');
-                    if (retrySessionID && retrySessionID.trim()) {
-                      finalSessionID = retrySessionID.trim();
-                      bodyObj.sessionID = finalSessionID;
-                      console.log('[OFFLINE][REAL_API] ✅ Found sessionID in URL on retry:', finalSessionID.substring(0, 20) + '...');
-                    }
-                  } catch (e) {}
+                  console.warn('[OFFLINE][REAL_API] 🔍 localStorage sessionID:', localStorage.getItem('OFFLINE_REAL_API_SESSION_ID'));
                 }
               }
               
@@ -1713,58 +1605,6 @@ try {
             }
           } else {
             // console.log('[OFFLINE][REAL_API] Request body: (empty, no processing needed)');
-          }
-          
-          // Если sessionID все еще null для /wallet/authenticate после всех попыток, возвращаем fallback ответ ДО отправки запроса
-          if (requestUrl.includes('/wallet/authenticate')) {
-            try {
-              const bodyObjCheck = processedBody ? JSON.parse(processedBody) : null;
-              if (bodyObjCheck && (!bodyObjCheck.sessionID || bodyObjCheck.sessionID === null)) {
-                console.warn('[OFFLINE][REAL_API] ⚠️ sessionID is null for /wallet/authenticate after all attempts, returning fallback response');
-                
-                // Получаем баланс из localStorage
-                let balance = 1000000000; // Дефолт 1000$
-                try {
-                  const storedBalance = Number(localStorage.getItem('OFFLINE_BALANCE'));
-                  if (isFinite(storedBalance) && storedBalance > 0) {
-                    balance = storedBalance;
-                  } else {
-                    let currencyFactor = 1000000;
-                    try {
-                      const cf = Number(localStorage.getItem('OFFLINE_CURRENCY_FACTOR'));
-                      if (isFinite(cf) && cf > 0) currencyFactor = cf;
-                    } catch (_) {}
-                    let defaultStart = 1000;
-                    try {
-                      const s = Number(localStorage.getItem('OFFLINE_START_BALANCE'));
-                      if (isFinite(s) && s > 0) defaultStart = s;
-                    } catch (_) {}
-                    balance = Math.round(defaultStart * currencyFactor);
-                  }
-                } catch (e) {}
-                
-                // Возвращаем успешный ответ (структура как в реальном API)
-                const successResponse = {
-                  balance: {
-                    cash: balance,
-                    bonus: 0
-                  },
-                  currency: localStorage.getItem('OFFLINE_REAL_API_CURRENCY') || 'USD'
-                };
-                
-                return Promise.resolve(new Response(JSON.stringify(successResponse), {
-                  status: 200,
-                  statusText: 'OK',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'Access-Control-Allow-Origin': '*'
-                  }
-                }));
-              }
-            } catch (e) {
-              // Если не удалось распарсить body, продолжаем с обычным запросом
-              console.warn('[OFFLINE][REAL_API] Failed to check sessionID in request body:', e);
-            }
           }
           
           // Копируем опции запроса
