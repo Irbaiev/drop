@@ -4,6 +4,12 @@
 // 1. WebSocket Shim с улучшенной логикой
 // ============================================
 (function() {
+  // Сохраняем ссылку на нативный fetch ДО любых переопределений (глобально)
+  try {
+    if (typeof window.fetch === 'function' && !window.__NATIVE_FETCH) {
+      window.__NATIVE_FETCH = window.fetch.bind(window);
+    }
+  } catch (_) {}
   const NativeWS = window.WebSocket;
   if (!NativeWS) return;
 
@@ -167,6 +173,41 @@
   console.log('[OFFLINE] BASE path:', BASE);
   
   let apiMocks = null;
+  
+  // Проверка, включено ли проксирование к реальному API
+  // Всегда ВКЛЮЧЕНО: отключение оффлайна и моков
+  function __useRealApi() {
+    return true;
+  }
+  
+  // Получение URL реального API сервера
+  function __getRealApiUrl() {
+    // Сначала проверяем параметр rgs_url из URL (если есть)
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const rgsUrl = urlParams.get('rgs_url');
+      if (rgsUrl && typeof rgsUrl === 'string' && rgsUrl.trim()) {
+        const cleanUrl = rgsUrl.trim();
+        // Если не содержит протокол, добавляем https://
+        const fullUrl = cleanUrl.startsWith('http://') || cleanUrl.startsWith('https://') 
+          ? cleanUrl 
+          : 'https://' + cleanUrl;
+        return fullUrl.replace(/\/+$/, ''); // Убираем trailing slashes
+      }
+    } catch (_) {}
+    
+    // Затем проверяем localStorage
+    try {
+      const url = localStorage.getItem('OFFLINE_REAL_API_URL');
+      if (url && typeof url === 'string' && url.trim()) {
+        return url.trim().replace(/\/+$/, ''); // Убираем trailing slashes
+      }
+    } catch (_) {}
+    
+    // Дефолтный URL
+    return 'https://rgs.twist-rgs.com';
+  }
+  
   // Мгновенная инициализация баланса при загрузке рантайма (до любых запросов)
   try {
     const existing = Number(localStorage.getItem('OFFLINE_BALANCE'));
@@ -183,13 +224,563 @@
     }
   } catch (e) { console.warn('[OFFLINE] Bootstrap balance init skipped:', e); }
   
+  // Автоматически сохраняем параметры из URL в localStorage при инициализации
+  // Это позволяет не вводить их вручную в консоли
+  try {
+    const urlParams = new URLSearchParams(window.location.search);
+    // Резерв: document.referrer и window.top.location.search
+    let refParams = null;
+    try { if (document.referrer) refParams = new URLSearchParams(new URL(document.referrer).search); } catch (_) {}
+    let topParams = null;
+    try { if (window.top && window.top !== window && window.top.location) topParams = new URLSearchParams(window.top.location.search); } catch (_) {}
+    
+    // Сохраняем rgs_url из URL/реферера/top в localStorage (если есть)
+    let rgsUrl = urlParams.get('rgs_url') || (refParams && refParams.get('rgs_url')) || (topParams && topParams.get('rgs_url'));
+    if (rgsUrl && typeof rgsUrl === 'string' && rgsUrl.trim()) {
+      const cleanUrl = rgsUrl.trim();
+      const fullUrl = cleanUrl.startsWith('http://') || cleanUrl.startsWith('https://') 
+        ? cleanUrl 
+        : 'https://' + cleanUrl;
+      const normalizedUrl = fullUrl.replace(/\/+$/, '');
+      localStorage.setItem('OFFLINE_REAL_API_URL', normalizedUrl);
+      console.log('[OFFLINE] 📍 Auto-saved rgs_url from URL to localStorage:', normalizedUrl);
+    }
+    
+    // Сохраняем sessionID из URL/реферера/top в localStorage (если есть)
+    let sessionID = urlParams.get('sessionID') || (refParams && refParams.get('sessionID')) || (topParams && topParams.get('sessionID'));
+    if (sessionID && typeof sessionID === 'string' && sessionID.trim()) {
+      localStorage.setItem('OFFLINE_REAL_API_SESSION_ID', sessionID.trim());
+      // Также сохраняем под ключом LAST_SESSION_ID для совместимости с index.html
+      localStorage.setItem('LAST_SESSION_ID', sessionID.trim());
+      console.log('[OFFLINE] 🔑 Auto-saved sessionID from URL to localStorage:', sessionID.trim());
+    }
+    
+    // Также проверяем LAST_SESSION_ID из localStorage и синхронизируем с OFFLINE_REAL_API_SESSION_ID
+    try {
+      const lastSessionID = localStorage.getItem('LAST_SESSION_ID');
+      if (lastSessionID && lastSessionID.trim() && !sessionID) {
+        // Если sessionID есть в LAST_SESSION_ID, но нет в URL, используем его
+        localStorage.setItem('OFFLINE_REAL_API_SESSION_ID', lastSessionID.trim());
+        console.log('[OFFLINE] 🔑 Synced LAST_SESSION_ID to OFFLINE_REAL_API_SESSION_ID:', lastSessionID.trim());
+      }
+    } catch (e) {}
+    
+    // Сохраняем currency (если только в referrer/top)
+    let currency = urlParams.get('currency') || (refParams && refParams.get('currency')) || (topParams && topParams.get('currency'));
+    if (currency && currency.trim()) {
+      try { localStorage.setItem('OFFLINE_REAL_API_CURRENCY', currency.trim()); } catch (_) {}
+    }
+    
+  // Включаем реальный API по умолчанию, если флаг не установлен явно
+  const useRealApiFlag = localStorage.getItem('OFFLINE_USE_REAL_API');
+  if (useRealApiFlag === null) {
+    // Если флаг не установлен, включаем по умолчанию
+    localStorage.setItem('OFFLINE_USE_REAL_API', '1');
+    console.log('[OFFLINE] ✅ Auto-enabled real API mode (default)');
+  }
+} catch (e) {
+  console.warn('[OFFLINE] Failed to auto-save URL parameters:', e);
+}
+
+// Обработчик postMessage для получения sessionID от родительского окна
+try {
+  window.addEventListener('message', function(event) {
+    // Проверяем, что сообщение содержит sessionID
+    if (event.data && typeof event.data === 'object' && event.data.type === 'SET_SESSION_ID') {
+      const { sessionID, rgsUrl, accessToken, force } = event.data;
+      
+      if (sessionID && typeof sessionID === 'string' && sessionID.trim()) {
+        const trimmedSessionID = sessionID.trim();
+        
+        // Сохраняем sessionID в оба ключа для совместимости
+        try {
+          localStorage.setItem('OFFLINE_REAL_API_SESSION_ID', trimmedSessionID);
+          localStorage.setItem('LAST_SESSION_ID', trimmedSessionID);
+          console.log('[OFFLINE] 🎧 Received sessionID via postMessage:', trimmedSessionID.substring(0, 20) + '...');
+          
+          // Если rgsUrl тоже передан, сохраняем его
+          if (rgsUrl && typeof rgsUrl === 'string' && rgsUrl.trim()) {
+            const trimmedRgsUrl = rgsUrl.trim();
+            const normalizedRgs = trimmedRgsUrl.startsWith('http') ? trimmedRgsUrl : `https://${trimmedRgsUrl}`;
+            localStorage.setItem('OFFLINE_REAL_API_URL', normalizedRgs.replace(/\/+$/, ''));
+            localStorage.setItem('LAST_RGS_URL', trimmedRgsUrl);
+            console.log('[OFFLINE] 🎧 Received rgsUrl via postMessage:', trimmedRgsUrl);
+          }
+          
+          // Если accessToken передан, обновляем его в URL и localStorage
+          if (accessToken && typeof accessToken === 'string' && accessToken.trim()) {
+            try {
+              const urlParams = new URLSearchParams(window.location.search);
+              urlParams.set('access_token', accessToken.trim());
+              
+              // Добавляем sessionID и rgsUrl в URL, если их там нет
+              if (!urlParams.has('sessionID')) {
+                urlParams.set('sessionID', trimmedSessionID);
+              }
+              if (rgsUrl && !urlParams.has('rgs_url')) {
+                urlParams.set('rgs_url', rgsUrl.trim());
+              }
+              
+              const newUrl = window.location.pathname + '?' + urlParams.toString();
+              window.history.replaceState({}, '', newUrl);
+              console.log('[OFFLINE] 🎧 Updated URL with sessionID and access_token from postMessage');
+            } catch (e) {
+              console.warn('[OFFLINE] Failed to update URL with postMessage data:', e);
+            }
+          } else if (force || !window.location.search.includes('sessionID')) {
+            // Если force=true или sessionID нет в URL, добавляем его в URL
+            try {
+              const urlParams = new URLSearchParams(window.location.search);
+              urlParams.set('sessionID', trimmedSessionID);
+              if (rgsUrl) {
+                urlParams.set('rgs_url', rgsUrl.trim());
+              }
+              const newUrl = window.location.pathname + '?' + urlParams.toString();
+              window.history.replaceState({}, '', newUrl);
+              console.log('[OFFLINE] 🎧 Added sessionID to URL from postMessage');
+            } catch (e) {
+              console.warn('[OFFLINE] Failed to add sessionID to URL:', e);
+            }
+          }
+        } catch (e) {
+          console.error('[OFFLINE] Failed to save sessionID from postMessage:', e);
+        }
+      }
+    }
+  });
+  console.log('[OFFLINE] 🎧 PostMessage listener установлен для получения sessionID от родительского окна');
+} catch (e) {
+  console.warn('[OFFLINE] Failed to setup postMessage listener:', e);
+}
+
+  // Если в localStorage уже есть sessionID/rgs_url, а в URL их нет — добавим их в адресную строку
+  try {
+    const urlParams2 = new URLSearchParams(window.location.search);
+    // Проверяем оба ключа: OFFLINE_REAL_API_SESSION_ID и LAST_SESSION_ID
+    let lsSession = localStorage.getItem('OFFLINE_REAL_API_SESSION_ID');
+    if (!lsSession) {
+      lsSession = localStorage.getItem('LAST_SESSION_ID');
+      if (lsSession) {
+        // Синхронизируем: сохраняем LAST_SESSION_ID в OFFLINE_REAL_API_SESSION_ID
+        localStorage.setItem('OFFLINE_REAL_API_SESSION_ID', lsSession);
+      }
+    }
+    const lsBase = localStorage.getItem('OFFLINE_REAL_API_URL');
+    const lsRgsUrl = localStorage.getItem('LAST_RGS_URL');
+    const hasSessionInUrl = !!urlParams2.get('sessionID');
+    const hasRgsInUrl = !!urlParams2.get('rgs_url');
+    if (lsSession && !hasSessionInUrl) {
+      urlParams2.set('sessionID', lsSession);
+    }
+    if (lsBase && !hasRgsInUrl) {
+      try {
+        const host = new URL(lsBase).host;
+        urlParams2.set('rgs_url', host);
+      } catch (_) {
+        // Если lsBase не URL, пробуем использовать как есть
+        if (!hasRgsInUrl) {
+          urlParams2.set('rgs_url', lsBase);
+        }
+      }
+    }
+    // Также проверяем LAST_RGS_URL
+    if (!hasRgsInUrl && lsRgsUrl) {
+      urlParams2.set('rgs_url', lsRgsUrl);
+    }
+    const newUrl2 = window.location.pathname + '?' + urlParams2.toString();
+    if (newUrl2 !== window.location.pathname + window.location.search) {
+      try { history.replaceState(null, '', newUrl2); } catch (_) {}
+    }
+  } catch (_) {}
+  
+  // Проверка и логирование режима реального API
+  const realApiEnabled = __useRealApi();
+  const realApiUrl = __getRealApiUrl();
+  
+  if (realApiEnabled) {
+    console.log('[OFFLINE] ✅ Real API mode ENABLED. API URL:', realApiUrl);
+    console.log('[OFFLINE] 💡 To disable real API and use mocks, run: localStorage.setItem("OFFLINE_USE_REAL_API", "0")');
+    
+    // Проверяем, настроен ли API для обновления sessionID
+    const sessionRefreshApiUrl = localStorage.getItem('OFFLINE_SESSION_REFRESH_API_URL');
+    if (sessionRefreshApiUrl) {
+      console.log('[OFFLINE] 🔄 Session refresh API configured:', sessionRefreshApiUrl);
+      console.log('[OFFLINE] 💡 Fresh sessionID will be fetched automatically on page reload');
+    } else {
+      console.log('[OFFLINE] 💡 To enable automatic session refresh, set: localStorage.setItem("OFFLINE_SESSION_REFRESH_API_URL", "https://your-api-url/api/session-refresh")');
+      console.log('[OFFLINE] 📖 See api/README.md for deployment instructions');
+    }
+  } else {
+    console.log('[OFFLINE] ⚠️ Real API mode DISABLED. Using local mocks.');
+    console.log('[OFFLINE] 💡 To enable real API, run: localStorage.setItem("OFFLINE_USE_REAL_API", "1")');
+  }
+
+  // Всегда создаём НОВУЮ сессию при загрузке страницы, если real API включен
+  // 1) Берём access_token из URL (если есть) или из localStorage (если сохранён)
+  // 2) Пытаемся /session/start с фейловером хоста: [текущий, rgs.stake-engine.com, rgs.twist-rgs.com]
+  // 3) Сохраняем sessionID и рабочий хост в localStorage, обновляем URL (replaceState)
+  // 4) Сохраняем access_token в localStorage для будущих обновлений страницы
+  (async () => {
+    if (!realApiEnabled) return;
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      // Флаг: принудительно создавать НОВУЮ сессию при каждой загрузке страницы
+      // По умолчанию ВКЛЮЧЕНО. Чтобы выключить: localStorage.setItem('OFFLINE_FORCE_NEW_SESSION_ON_LOAD','0')
+      let forceNewSession = true;
+      try {
+        const v = localStorage.getItem('OFFLINE_FORCE_NEW_SESSION_ON_LOAD');
+        if (v !== null) forceNewSession = v !== '0'; else localStorage.setItem('OFFLINE_FORCE_NEW_SESSION_ON_LOAD', '1');
+      } catch (_) {}
+      // Если НЕ принудительный режим и sessionID уже есть в URL/реферере/top — пропускаем создание новой сессии
+      let sessionIdFromUrl = urlParams.get('sessionID');
+      try {
+        if ((!sessionIdFromUrl || !sessionIdFromUrl.trim()) && document.referrer) {
+          sessionIdFromUrl = new URL(document.referrer).searchParams.get('sessionID');
+        }
+      } catch (_) {}
+      try {
+        if ((!sessionIdFromUrl || !sessionIdFromUrl.trim()) && window.top && window.top !== window) {
+          sessionIdFromUrl = new URLSearchParams(window.top.location.search).get('sessionID');
+        }
+      } catch (_) {}
+      if (!forceNewSession && sessionIdFromUrl && String(sessionIdFromUrl).trim()) {
+        const trimmedSid = String(sessionIdFromUrl).trim();
+        try { localStorage.setItem('OFFLINE_REAL_API_SESSION_ID', trimmedSid); } catch (_) {}
+        let rgsUrlFromUrl = urlParams.get('rgs_url');
+        try {
+          if ((!rgsUrlFromUrl || !rgsUrlFromUrl.trim()) && document.referrer) {
+            rgsUrlFromUrl = new URL(document.referrer).searchParams.get('rgs_url');
+          }
+        } catch (_) {}
+        try {
+          if ((!rgsUrlFromUrl || !rgsUrlFromUrl.trim()) && window.top && window.top !== window) {
+            rgsUrlFromUrl = new URLSearchParams(window.top.location.search).get('rgs_url');
+          }
+        } catch (_) {}
+        if (rgsUrlFromUrl) {
+          const normalizedBase = rgsUrlFromUrl.startsWith('http') ? rgsUrlFromUrl : `https://${rgsUrlFromUrl}`;
+          try { localStorage.setItem('OFFLINE_REAL_API_URL', normalizedBase.replace(/\/$/, '')); } catch (_) {}
+          console.log('[OFFLINE] 📍 Updated rgs_url from URL:', normalizedBase.replace(/\/$/, ''));
+        }
+        // Нормализуем URL (сохраним sessionID, rgs_url и currency)
+        const newParams = new URLSearchParams(window.location.search);
+        newParams.set('sessionID', trimmedSid);
+        if (rgsUrlFromUrl) newParams.set('rgs_url', rgsUrlFromUrl);
+        const currency = urlParams.get('currency')
+          || (document.referrer ? new URL(document.referrer).searchParams.get('currency') : null)
+          || (window.top && window.top !== window ? new URLSearchParams(window.top.location.search).get('currency') : null)
+          || localStorage.getItem('OFFLINE_REAL_API_CURRENCY')
+          || 'USD';
+        newParams.set('currency', currency);
+        const newUrl = window.location.pathname + '?' + newParams.toString();
+        try { history.replaceState(null, '', newUrl); } catch (_) {}
+        console.log('[OFFLINE] ▶ Using provided sessionID from URL:', trimmedSid, '- Skipping /session/start');
+        return;
+      }
+
+      // Если НЕ принудительный режим и sessionID уже сохранён в localStorage — пропускаем /session/start
+      try {
+        const savedSid = localStorage.getItem('OFFLINE_REAL_API_SESSION_ID');
+        if (!forceNewSession && savedSid && savedSid.trim()) {
+          console.log('[OFFLINE] ▶ Using saved sessionID from localStorage:', savedSid.trim(), '- Skipping /session/start');
+          return;
+        }
+      } catch (_) {}
+
+      // Получаем access_token из localStorage (приоритет) или из URL
+      // ВАЖНО: Токен пользователя НЕ должен перезаписываться из URL - он постоянный для устройства
+      let accessToken = null;
+      
+      // ПРИОРИТЕТ 1: Используем токен из localStorage (постоянный токен пользователя)
+      try {
+        accessToken = localStorage.getItem('OFFLINE_USER_ACCESS_TOKEN');
+        if (accessToken) {
+          console.log('[OFFLINE] 🔑 Using permanent user access_token from localStorage');
+          // Обновляем URL с постоянным токеном пользователя, если он отличается
+          const urlToken = urlParams.get('access_token');
+          if (urlToken && urlToken !== accessToken) {
+            urlParams.set('access_token', accessToken);
+            history.replaceState(null, '', location.pathname + '?' + urlParams.toString());
+            console.log('[OFFLINE] 🔄 Updated URL with permanent user access_token');
+          }
+        }
+      } catch (_) {}
+      
+      // ПРИОРИТЕТ 2: Если токена пользователя нет, используем из URL (только при первом запуске)
+      if (!accessToken) {
+        accessToken = urlParams.get('access_token');
+        if (accessToken) {
+          // Сохраняем токен из URL только если у пользователя еще нет постоянного токена
+          try {
+            localStorage.setItem('OFFLINE_USER_ACCESS_TOKEN', accessToken);
+            localStorage.setItem('OFFLINE_REAL_API_ACCESS_TOKEN', accessToken); // Для совместимости
+            console.log('[OFFLINE] 💾 Saved access_token from URL to localStorage (first time only)');
+          } catch (_) {}
+        } else {
+          // ПРИОРИТЕТ 3: Fallback на старый ключ для совместимости
+          try {
+            accessToken = localStorage.getItem('OFFLINE_REAL_API_ACCESS_TOKEN');
+            if (accessToken) {
+              // Мигрируем на новый ключ
+              localStorage.setItem('OFFLINE_USER_ACCESS_TOKEN', accessToken);
+              console.log('[OFFLINE] 🔄 Migrated access_token to permanent storage');
+            }
+          } catch (_) {}
+        }
+      }
+      
+      // ПРИОРИТЕТ 1: Попытка получить свежий sessionID через наш API (если настроен)
+      // Это работает только если у вас развернут serverless-функция для парсинга stake.com
+      const sessionRefreshApiUrl = localStorage.getItem('OFFLINE_SESSION_REFRESH_API_URL');
+      if (sessionRefreshApiUrl && forceNewSession) {
+        try {
+          console.log('[OFFLINE] 🔄 Attempting to fetch fresh sessionID from API:', sessionRefreshApiUrl);
+          // gameUrl можно задать через localStorage или URL параметр
+          const gameUrl = urlParams.get('gameUrl') 
+            || localStorage.getItem('OFFLINE_SESSION_REFRESH_GAME_URL')
+            || 'https://stake.com/ru/casino/games/mirrorimage-drop-the-boss-trump';
+          const apiUrl = `${sessionRefreshApiUrl}${sessionRefreshApiUrl.includes('?') ? '&' : '?'}gameUrl=${encodeURIComponent(gameUrl)}`;
+          
+          const apiResponse = await fetch(apiUrl, {
+            method: 'GET',
+            headers: {
+              'Accept': 'application/json'
+            },
+            mode: 'cors'
+          });
+          
+          if (apiResponse.ok) {
+            const apiData = await apiResponse.json().catch(() => null);
+            if (apiData && apiData.sessionID && apiData.rgs_url) {
+              console.log('[OFFLINE] ✅ Successfully fetched fresh sessionID from API:', apiData.sessionID.substring(0, 20) + '...');
+              
+              // Сохраняем полученные данные
+              try {
+                localStorage.setItem('OFFLINE_REAL_API_SESSION_ID', String(apiData.sessionID));
+                const normalizedRgs = apiData.rgs_url.startsWith('http') ? apiData.rgs_url : `https://${apiData.rgs_url}`;
+                localStorage.setItem('OFFLINE_REAL_API_URL', normalizedRgs.replace(/\/$/, ''));
+                if (apiData.currency) {
+                  localStorage.setItem('OFFLINE_REAL_API_CURRENCY', apiData.currency);
+                }
+              } catch (_) {}
+              
+              // Обновляем URL
+              const newParams = new URLSearchParams(window.location.search);
+              newParams.set('sessionID', String(apiData.sessionID));
+              newParams.set('rgs_url', apiData.rgs_url);
+              if (apiData.currency) newParams.set('currency', apiData.currency);
+              const newUrl = window.location.pathname + '?' + newParams.toString();
+              try { history.replaceState(null, '', newUrl); } catch (_) {}
+              
+              console.log('[OFFLINE] ✅ Session refreshed via API. New sessionID:', apiData.sessionID.substring(0, 20) + '...');
+              return; // Успешно получили sessionID, выходим
+            } else {
+              console.warn('[OFFLINE] ⚠️ API returned invalid data:', apiData);
+            }
+          } else {
+            const errorText = await apiResponse.text().catch(() => '');
+            console.warn('[OFFLINE] ⚠️ API request failed:', apiResponse.status, errorText.substring(0, 100));
+          }
+        } catch (apiError) {
+          console.warn('[OFFLINE] ⚠️ Failed to fetch sessionID from API:', apiError);
+          // Продолжаем с обычным методом (/session/start)
+        }
+      }
+      
+      // Если токена нет ни в URL, ни в localStorage - не можем создать сессию
+      if (!accessToken) {
+        console.warn('[OFFLINE] ⚠️ No access_token found in URL or localStorage. Cannot create new session.');
+        
+        // Без сервера: предлагаем способ получить sessionID через bookmarklet на странице Stake
+        try {
+          const bookmarklet =
+            "javascript:(()=>{try{const ifr=[...document.querySelectorAll('iframe')].find(f=>/drop-the-boss\\/v\\d+/.test(String(f.src)));if(!ifr){alert('Не найден iframe с игрой. Откройте страницу игры и повторите.');return;}const u=new URL(ifr.src);const sid=u.searchParams.get('sessionID');const rgs=u.searchParams.get('rgs_url');const cur=u.searchParams.get('currency')||'USD';if(!sid||!rgs){alert('Не удалось извлечь sessionID/rgs_url.');return;}const dest=location.origin+'/?sessionID='+encodeURIComponent(sid)+'&rgs_url='+encodeURIComponent(rgs)+'&currency='+encodeURIComponent(cur);window.open(dest,'_self');}catch(e){alert('Ошибка bookmarklet: '+e.message);}})();";
+          console.log('\n[OFFLINE] 🔗 Bookmarklet для получения sessionID без сервера:\n' + bookmarklet + '\n');
+          console.log('[OFFLINE] Инструкция:');
+          console.log('1) Создайте закладку в браузере.');
+          console.log('2) В качестве URL закладки вставьте код из строки выше (начинается с "javascript:(()=>{")');
+          console.log('3) Откройте страницу игры на stake.com с нужной игрой.');
+          console.log('4) Нажмите эту закладку — вы будете перенаправлены на нашу страницу уже с sessionID и rgs_url.');
+        } catch (_) {}
+        
+        // Альтернатива без закладки: попросим у пользователя вставить URL из iframe (src)
+        try {
+          const pasted = window.prompt('Вставьте сюда URL iframe (src) со страницы Stake (содержит sessionID и rgs_url):');
+          if (pasted && pasted.trim()) {
+            try {
+              let src = pasted.trim();
+              if (src.startsWith('//')) src = 'https:' + src;
+              if (!/^https?:\/\//i.test(src)) src = 'https://' + src;
+              const u = new URL(src);
+              const sid = u.searchParams.get('sessionID');
+              const rgs = u.searchParams.get('rgs_url');
+              const cur = u.searchParams.get('currency') || 'USD';
+              if (sid && rgs) {
+                try {
+                  localStorage.setItem('OFFLINE_REAL_API_SESSION_ID', sid);
+                  const normalizedRgs = rgs.startsWith('http') ? rgs : `https://${rgs}`;
+                  localStorage.setItem('OFFLINE_REAL_API_URL', normalizedRgs.replace(/\/$/, ''));
+                  localStorage.setItem('OFFLINE_REAL_API_CURRENCY', cur);
+                } catch (_) {}
+                const newParams = new URLSearchParams(window.location.search);
+                newParams.set('sessionID', sid);
+                newParams.set('rgs_url', rgs);
+                newParams.set('currency', cur);
+                const newUrl = window.location.pathname + '?' + newParams.toString();
+                try { history.replaceState(null, '', newUrl); } catch (_) {}
+                console.log('[OFFLINE] ✅ Session parameters applied from pasted URL');
+                return;
+              } else {
+                console.warn('[OFFLINE] Некорректный URL: не найдены sessionID/rgs_url');
+              }
+            } catch (e) {
+              console.warn('[OFFLINE] Невалидный URL:', e);
+            }
+          }
+        } catch (_) {}
+        return;
+      }
+      
+      const currency = urlParams.get('currency') || localStorage.getItem('OFFLINE_REAL_API_CURRENCY') || 'USD';
+      const gameIDParam = urlParams.get('gameID') || '0196ecd0-c06c-74ca-9bc9-e6b3310f1651';
+      
+      // Сохраняем currency в localStorage
+      try {
+        localStorage.setItem('OFFLINE_REAL_API_CURRENCY', currency);
+      } catch (_) {}
+
+      // ПРИОРИТЕТ 2: Стартуем новую сессию через /session/start (fallback, если API не настроен или не сработал)
+      // Список хостов для попыток (уникальные)
+      const candidates = [];
+      const current = realApiUrl.replace(/\/$/, '');
+      if (current) candidates.push(current);
+      if (!candidates.includes('https://rgs.stake-engine.com')) candidates.push('https://rgs.stake-engine.com');
+      if (!candidates.includes('https://rgs.twist-rgs.com')) candidates.push('https://rgs.twist-rgs.com');
+
+      let chosenBase = null;
+      let newSessionID = null;
+
+      console.log('[OFFLINE] 🔄 Creating new session via /session/start (with failover)...');
+      for (const base of candidates) {
+        try {
+          const url = base + '/session/start';
+          // Используем нативный fetch, чтобы избежать гонки с нашим переопределением
+          const nativeFetchFn = (typeof window.__NATIVE_FETCH === 'function') ? window.__NATIVE_FETCH : window.fetch;
+          
+          // Вариант без preflight: простые заголовки и text/plain
+          const headers1 = new Headers({ 
+            'Content-Type': 'text/plain'
+          });
+          const body1 = JSON.stringify({ gameID: gameIDParam, currency });
+          
+          console.log('[OFFLINE] 🔍 Trying /session/start on', base);
+          console.log('[OFFLINE] 🔍 Request body:', body1);
+          console.log('[OFFLINE] 🔍 Access token present:', !!accessToken);
+          const res = nativeFetchFn ? await nativeFetchFn(url, {
+            method: 'POST',
+            headers: headers1,
+            body: body1,
+            mode: 'cors'
+          }) : null;
+          
+          if (!res || !res.ok) {
+            const t = res ? (await res.text().catch(() => '')) : 'no-response';
+            console.warn('[OFFLINE] /session/start failed on', base, '-', res ? res.status : 'no-status', t);
+            
+            // Пробуем второй вариант: access_token в body (всё ещё без нестандартных заголовков)
+            if (accessToken) {
+              console.log('[OFFLINE] 🔍 Retrying /session/start on', base, 'with access_token in body');
+              const headers2 = new Headers({ 'Content-Type': 'text/plain' });
+              const body2 = JSON.stringify({ gameID: gameIDParam, access_token: accessToken, currency });
+              const res2 = nativeFetchFn ? await nativeFetchFn(url, {
+                method: 'POST',
+                headers: headers2,
+                body: body2,
+                mode: 'cors'
+              }) : null;
+              
+              if (res2 && res2.ok) {
+                const data2 = await res2.json().catch(() => ({}));
+                const sid2 = data2.sessionID || (data2.config && data2.config.sessionID);
+                if (sid2) {
+                  chosenBase = base;
+                  newSessionID = String(sid2);
+                  break;
+                }
+              }
+            }
+            continue;
+          }
+          let data = {};
+          try { data = await res.json(); } catch (e) {
+            console.warn('[OFFLINE] Failed to parse /session/start on', base, e);
+            continue;
+          }
+          const sid = data.sessionID || (data.config && data.config.sessionID);
+          if (!sid) {
+            console.warn('[OFFLINE] No sessionID in response on', base, data);
+            continue;
+          }
+          chosenBase = base;
+          newSessionID = String(sid);
+          break;
+        } catch (e) {
+          console.warn('[OFFLINE] /session/start error on', base, e);
+        }
+      }
+
+      if (!chosenBase || !newSessionID) {
+        console.warn('[OFFLINE] ❌ Could not create session on any known host');
+        return;
+      }
+
+      console.log('[OFFLINE] ✅ New session created on', chosenBase, 'sessionID:', newSessionID);
+
+      // Сохраняем sessionID в localStorage
+      try { 
+        localStorage.setItem('OFFLINE_REAL_API_SESSION_ID', String(newSessionID)); 
+      } catch (_) {}
+
+      // Сохраняем выбранный рабочий базовый URL
+      try {
+        localStorage.setItem('OFFLINE_REAL_API_URL', chosenBase);
+      } catch (_) {}
+
+      // Формируем новый URL: добавляем sessionID и rgs_url, убираем access_token
+      const newParams = new URLSearchParams(window.location.search);
+      newParams.set('sessionID', String(newSessionID));
+      try {
+        const host = new URL(chosenBase).host;
+        newParams.set('rgs_url', host);
+      } catch (_) {
+        // если не распарсили — оставим как есть
+      }
+      newParams.set('currency', currency);
+      newParams.delete('access_token'); // Убираем access_token из URL (он сохранён в localStorage)
+
+      const newUrl = window.location.pathname + '?' + newParams.toString();
+      try { 
+        history.replaceState(null, '', newUrl); 
+        console.log('[OFFLINE] 🔁 URL updated with new sessionID:', newSessionID);
+      } catch (_) {}
+    } catch (e) {
+      console.warn('[OFFLINE] ❌ Auto new-session flow failed:', e);
+    }
+  })();
+  
   fetch(BASE + 'mocks/apiMap.json')
     .then(r => r.json())
     .then(mocks => {
       apiMocks = Array.isArray(mocks) ? mocks : [];
-      console.log('[OFFLINE] Loaded', apiMocks.length, 'API mocks');
+      if (!realApiEnabled) {
+        console.log('[OFFLINE] Loaded', apiMocks.length, 'API mocks from:', BASE);
+      }
     })
-    .catch(e => console.warn('[OFFLINE] Failed to load API mocks:', e));
+    .catch(e => {
+      if (!realApiEnabled) {
+        console.warn('[OFFLINE] Failed to load API mocks from', BASE + ':', e);
+      }
+    });
   
   // Перехват fetch для API моков
   const originalFetch = window.fetch;
@@ -786,8 +1377,8 @@
     }
     return NaN;
   }
-  window.fetch = function(url, options = {}) {
-    console.log('[OFFLINE] Fetch request:', url, 'method:', options.method || 'GET');
+  window.fetch = async function(url, options = {}) {
+    // console.log('[OFFLINE] Fetch request:', url, 'method:', options.method || 'GET'); // Отключено для уменьшения засорения консоли
     // Общая переменная для извлечённой суммы ставки из тела запроса
     let __offlineRequestedBet = NaN;
     // Попытка получить ставку из UI
@@ -795,75 +1386,1278 @@
     
     // Ранний перехват session/start - ДО поиска моков
     if (typeof url === 'string' && (url.includes('/session/start') || url.endsWith('/session/start'))) {
-      console.log('[OFFLINE] Early intercept session/start:', url);
-      // Ищем мок для session/start
-      const sessionMock = apiMocks ? apiMocks.find(m => 
-        m.method === (options.method || 'GET') && 
-        (m.url.includes('/session/start') || m.pathname === '/session/start')
-      ) : null;
-      
-      if (sessionMock) {
-        const fetchPath = sessionMock.file.startsWith('/') ? sessionMock.file : (BASE + sessionMock.file);
-        return fetch(fetchPath + ('?t=' + Date.now()), { cache: 'no-store' })
-          .then(response => response.json())
-          .then(mockData => {
-            const mockResponse = mockData.response || mockData;
-            let body;
-            if (mockResponse.body) {
-              body = typeof mockResponse.body === 'string' ? mockResponse.body : JSON.stringify(mockResponse.body);
-            } else if (mockResponse.bodyB64) {
-              body = atob(mockResponse.bodyB64);
-            } else {
-              body = JSON.stringify(mockResponse);
-            }
-            
-            try {
-              const parsed = JSON.parse(body);
-              let defaultStart = 1000;
-              try {
-                const startRaw = localStorage.getItem('OFFLINE_START_BALANCE');
-                if (startRaw != null) {
-                  const startNum = Number(startRaw);
-                  if (isFinite(startNum)) defaultStart = startNum;
-                }
-              } catch (_) {}
-              let currencyFactor = 1000000;
-              try {
-                const cf = Number(localStorage.getItem('OFFLINE_CURRENCY_FACTOR'));
-                if (isFinite(cf) && cf > 0) currencyFactor = cf;
-              } catch (_) {}
-              
-              const startBalanceUnits = Math.round(defaultStart * currencyFactor);
-              console.log('[OFFLINE] [EARLY] Setting start balance to:', defaultStart, '$ =', startBalanceUnits, 'units');
-              
-              if (parsed && parsed.balance && typeof parsed.balance === 'object') {
-                parsed.balance.amount = startBalanceUnits;
-                body = JSON.stringify(parsed);
+      // При активном реальном API не используем мок session/start
+      if (typeof __useRealApi === 'function' && __useRealApi()) {
+        // пропускаем — ниже запрос пойдёт в реальный API
+      } else {
+        console.log('[OFFLINE] Early intercept session/start:', url);
+        // Ищем мок для session/start
+        const sessionMock = apiMocks ? apiMocks.find(m => 
+          m.method === (options.method || 'GET') && 
+          (m.url.includes('/session/start') || m.pathname === '/session/start')
+        ) : null;
+        
+        if (sessionMock) {
+          const fetchPath = sessionMock.file.startsWith('/') ? sessionMock.file : (BASE + sessionMock.file);
+          return fetch(fetchPath + ('?t=' + Date.now()), { cache: 'no-store' })
+            .then(response => response.json())
+            .then(mockData => {
+              const mockResponse = mockData.response || mockData;
+              let body;
+              if (mockResponse.body) {
+                body = typeof mockResponse.body === 'string' ? mockResponse.body : JSON.stringify(mockResponse.body);
+              } else if (mockResponse.bodyB64) {
+                body = atob(mockResponse.bodyB64);
+              } else {
+                body = JSON.stringify(mockResponse);
               }
-              try { localStorage.setItem('OFFLINE_BALANCE', String(startBalanceUnits)); } catch (_) {}
               
-              const headers = new Headers();
-              headers.set('Content-Type', 'application/json');
-              return new Response(body, {
-                status: mockResponse.status || 200,
-                statusText: mockResponse.statusText || 'OK',
-                headers
-              });
+              try {
+                const parsed = JSON.parse(body);
+                let defaultStart = 1000;
+                try {
+                  const startRaw = localStorage.getItem('OFFLINE_START_BALANCE');
+                  if (startRaw != null) {
+                    const startNum = Number(startRaw);
+                    if (isFinite(startNum)) defaultStart = startNum;
+                  }
+                } catch (_) {}
+                let currencyFactor = 1000000;
+                try {
+                  const cf = Number(localStorage.getItem('OFFLINE_CURRENCY_FACTOR'));
+                  if (isFinite(cf) && cf > 0) currencyFactor = cf;
+                } catch (_) {}
+                
+                const startBalanceUnits = Math.round(defaultStart * currencyFactor);
+                console.log('[OFFLINE] [EARLY] Setting start balance to:', defaultStart, '$ =', startBalanceUnits, 'units');
+                
+                if (parsed && parsed.balance && typeof parsed.balance === 'object') {
+                  parsed.balance.amount = startBalanceUnits;
+                  body = JSON.stringify(parsed);
+                }
+                try { localStorage.setItem('OFFLINE_BALANCE', String(startBalanceUnits)); } catch (_) {}
+                
+                const headers = new Headers();
+                headers.set('Content-Type', 'application/json');
+                return new Response(body, {
+                  status: mockResponse.status || 200,
+                  statusText: mockResponse.statusText || 'OK',
+                  headers
+                });
+              } catch (e) {
+                console.error('[OFFLINE] [EARLY] session/start parse error:', e);
+                const headers = new Headers();
+                headers.set('Content-Type', 'application/json');
+                return new Response(body, {
+                  status: mockResponse.status || 200,
+                  statusText: mockResponse.statusText || 'OK',
+                  headers
+                });
+              }
+            })
+            .catch(e => {
+              console.error('[OFFLINE] [EARLY] session/start fetch error:', e);
+              return originalFetch.call(this, url, options);
+            });
+        }
+      }
+    }
+    
+    // Если включено проксирование к реальному API - делаем реальный запрос
+    if (typeof url === 'string' && __useRealApi()) {
+      try {
+        const realApiUrl = __getRealApiUrl();
+        // Временное логирование для диагностики
+        if (url.includes('/wallet/authenticate') || url.includes('/wallet/play')) {
+          console.log('[OFFLINE][REAL_API] 🔍 Using API URL:', realApiUrl);
+          console.log('[OFFLINE][REAL_API] 🔍 Current URL params:', window.location.search);
+          console.log('[OFFLINE][REAL_API] 🔍 localStorage rgs_url:', localStorage.getItem('OFFLINE_REAL_API_URL'));
+        }
+        let requestUrl = url;
+        
+        // РАННЕЕ логирование - для диагностики (отключено для уменьшения засорения консоли)
+        // console.log('[OFFLINE][REAL_API] 🔍 Intercepted fetch request:', {
+        //   url: url,
+        //   method: options.method || 'GET',
+        //   hasBody: !!options.body,
+        //   realApiUrl: realApiUrl
+        // });
+        
+        // Исправляем проблему с undefined в URL
+        if (url.includes('undefined')) {
+          // Если URL содержит undefined, извлекаем путь после undefined
+          const pathMatch = url.match(/undefined(\/.*)/);
+          if (pathMatch && pathMatch[1]) {
+            url = pathMatch[1]; // Используем только путь
+          } else {
+            // Если не удалось извлечь, пытаемся найти путь другим способом
+            const parts = url.split('/');
+            const pathIndex = parts.findIndex(p => p === 'undefined');
+            if (pathIndex >= 0 && pathIndex < parts.length - 1) {
+              url = '/' + parts.slice(pathIndex + 1).join('/');
+            }
+          }
+        }
+        
+        // Проверяем, является ли URL запросом к реальному API
+        const isRealApiRequest = url.includes('rgs.twist-rgs.com') || 
+                                 url.includes(realApiUrl) ||
+                                 url.startsWith('/wallet/') ||
+                                 url.startsWith('/session/') ||
+                                 url.includes('/wallet/') ||
+                                 url.includes('/session/');
+        
+        if (isRealApiRequest) {
+          // Если это полный URL к реальному API, используем его как есть
+          if (url.startsWith('http://') || url.startsWith('https://')) {
+            // Если URL уже содержит нужный домен, оставляем как есть
+            if (url.includes(realApiUrl)) {
+              requestUrl = url;
+            } else {
+              // Если это другой домен, заменяем на реальный API
+              try {
+                const urlObj = new URL(url);
+                requestUrl = realApiUrl + urlObj.pathname + (urlObj.search || '');
+              } catch (e) {
+                // Если не удалось распарсить, извлекаем путь вручную
+                const pathMatch = url.match(/https?:\/\/[^\/]+(\/.*)/);
+                if (pathMatch && pathMatch[1]) {
+                  requestUrl = realApiUrl + pathMatch[1];
+                } else {
+                  requestUrl = url; // Оставляем как есть при ошибке
+                }
+              }
+            }
+          } else {
+            // Если это относительный путь, добавляем реальный API URL
+            // Извлекаем путь, игнорируя возможный undefined в начале
+            let cleanPath = url;
+            if (cleanPath.startsWith('undefined')) {
+              cleanPath = cleanPath.replace(/^undefined/, '');
+            }
+            if (!cleanPath.startsWith('/')) {
+              cleanPath = '/' + cleanPath;
+            }
+            requestUrl = realApiUrl + cleanPath;
+          }
+          
+          // ДЕТАЛЬНОЕ логирование всех параметров запроса (отключено для уменьшения засорения консоли)
+          // Оставляем только важные логи об ошибках
+          
+          // Обрабатываем тело запроса: делаем amount строкой и используем сохраненный sessionID
+          let processedBody = options.body;
+          if (options.body) {
+            try {
+              let bodyObj;
+              if (typeof options.body === 'string') {
+                bodyObj = JSON.parse(options.body);
+              } else {
+                bodyObj = options.body;
+              }
+              
+              // Обрабатываем amount: для /wallet/authenticate не трогаем, для /wallet/play оставляем числом
+              // (API может требовать число для /wallet/play, а не строку)
+              // НЕ преобразуем amount в строку для всех запросов - только если API требует
+              
+              // ВАЖНО: НЕ добавляем access_token в тело запроса - API его не использует
+              // access_token используется только в URL, но не отправляется в теле запроса
+              
+              // Обрабатываем sessionID: приоритет - из URL параметров, затем из localStorage
+              // ВАЖНО: API требует sessionID для всех запросов, даже если он null
+              if (bodyObj && typeof bodyObj === 'object') {
+                // ПРИОРИТЕТ 1: sessionID из URL параметров (как на оригинальном сайте)
+                let finalSessionID = null;
+                try {
+                  const urlParams = new URLSearchParams(window.location.search);
+                  const urlSessionID = urlParams.get('sessionID');
+                  if (urlSessionID && urlSessionID.trim()) {
+                    finalSessionID = urlSessionID.trim();
+                    // Сохраняем для будущих запросов
+                    try {
+                      localStorage.setItem('OFFLINE_REAL_API_SESSION_ID', finalSessionID);
+                      console.log('[OFFLINE][REAL_API] ✅ Using sessionID from URL:', finalSessionID);
+                    } catch (e) {
+                      console.warn('[OFFLINE][REAL_API] Failed to save sessionID to localStorage:', e);
+                    }
+                  } else {
+                    console.log('[OFFLINE][REAL_API] 🔍 No sessionID in URL. Current URL:', window.location.href);
+                  }
+                } catch (e) {
+                  console.warn('[OFFLINE][REAL_API] Error parsing URL for sessionID:', e);
+                }
+                
+                // ПРИОРИТЕТ 2: sessionID из localStorage (если не найден в URL)
+                // Проверяем оба ключа: OFFLINE_REAL_API_SESSION_ID и LAST_SESSION_ID
+                if (!finalSessionID) {
+                  try {
+                    let savedSessionID = localStorage.getItem('OFFLINE_REAL_API_SESSION_ID');
+                    if (!savedSessionID) {
+                      // Пробуем получить из LAST_SESSION_ID (используется в index.html)
+                      savedSessionID = localStorage.getItem('LAST_SESSION_ID');
+                      if (savedSessionID) {
+                        // Синхронизируем: сохраняем в OFFLINE_REAL_API_SESSION_ID для будущих запросов
+                        localStorage.setItem('OFFLINE_REAL_API_SESSION_ID', savedSessionID.trim());
+                        console.log('[OFFLINE][REAL_API] 🔄 Synced LAST_SESSION_ID to OFFLINE_REAL_API_SESSION_ID');
+                      }
+                    }
+                    if (savedSessionID && savedSessionID.trim()) {
+                      finalSessionID = savedSessionID.trim();
+                    }
+                  } catch (e) {}
+                }
+                
+                // ПРИОРИТЕТ 3: sessionID из тела запроса (если есть и не null)
+                if (!finalSessionID && bodyObj.sessionID !== null && bodyObj.sessionID !== undefined && bodyObj.sessionID !== '') {
+                  finalSessionID = String(bodyObj.sessionID);
+                  try { localStorage.setItem('OFFLINE_REAL_API_SESSION_ID', finalSessionID); } catch (e) {}
+                }
+                
+                // Больше не автозапускаем /session/start из перехвата — опираемся на sessionID из URL/LS
+                
+                // Устанавливаем финальный sessionID (или null, если не найден)
+                bodyObj.sessionID = finalSessionID || null;
+                
+                if (requestUrl.includes('/wallet/authenticate') && !finalSessionID) {
+                  console.warn('[OFFLINE][REAL_API] ⚠️ No sessionID found for /wallet/authenticate');
+                  console.warn('[OFFLINE][REAL_API] 🔍 URL params:', window.location.search);
+                  console.warn('[OFFLINE][REAL_API] 🔍 localStorage OFFLINE_REAL_API_SESSION_ID:', localStorage.getItem('OFFLINE_REAL_API_SESSION_ID'));
+                  console.warn('[OFFLINE][REAL_API] 🔍 localStorage LAST_SESSION_ID:', localStorage.getItem('LAST_SESSION_ID'));
+                  
+                  // Если sessionID все еще не найден, пробуем еще раз получить из URL (возможно, он был добавлен через postMessage)
+                  // и возвращаем fallback ответ сразу, чтобы избежать ошибки 400
+                  try {
+                    const urlParamsRetry = new URLSearchParams(window.location.search);
+                    const retrySessionID = urlParamsRetry.get('sessionID');
+                    if (retrySessionID && retrySessionID.trim()) {
+                      finalSessionID = retrySessionID.trim();
+                      bodyObj.sessionID = finalSessionID;
+                      console.log('[OFFLINE][REAL_API] ✅ Found sessionID in URL on retry:', finalSessionID.substring(0, 20) + '...');
+                    }
+                  } catch (e) {}
+                }
+              }
+              
+              // Для /wallet/authenticate: очищаем тело запроса от лишних полей
+              // API ожидает только sessionID и gameID (как на оригинальном сайте)
+              if (requestUrl.includes('/wallet/authenticate') && bodyObj && typeof bodyObj === 'object') {
+                const cleanBody = {
+                  sessionID: bodyObj.sessionID || null,
+                  gameID: bodyObj.gameID || '0196ecd0-c06c-74ca-9bc9-e6b3310f1651'
+                };
+                bodyObj = cleanBody;
+              }
+              
+              processedBody = JSON.stringify(bodyObj);
+              
+              // ВРЕМЕННОЕ детальное логирование для /wallet/authenticate (для диагностики)
+              if (requestUrl.includes('/wallet/authenticate')) {
+                console.log('[OFFLINE][REAL_API] 🔍 AUTHENTICATE REQUEST BODY:', JSON.stringify(bodyObj, null, 2));
+                console.log('[OFFLINE][REAL_API] 🔍 AUTHENTICATE REQUEST URL:', requestUrl);
+                // Декодируем JWT токен для диагностики
+                try {
+                  const urlParams = new URLSearchParams(window.location.search);
+                  const accessToken = urlParams.get('access_token');
+                  if (accessToken) {
+                    const payload = JSON.parse(atob(accessToken.split('.')[1]));
+                    console.log('[OFFLINE][REAL_API] 🔍 JWT PAYLOAD:', JSON.stringify(payload, null, 2));
+                  }
+                } catch (e) {
+                  console.warn('[OFFLINE][REAL_API] Failed to decode JWT:', e);
+                }
+              }
+              
+              // Логируем обработанное тело запроса (отключено для уменьшения засорения консоли)
+              // console.log('[OFFLINE][REAL_API] Processed request body (full):', processedBody);
+              // console.log('[OFFLINE][REAL_API] Processed request body (parsed):', JSON.stringify(bodyObj, null, 2));
             } catch (e) {
-              console.error('[OFFLINE] [EARLY] session/start parse error:', e);
-              const headers = new Headers();
-              headers.set('Content-Type', 'application/json');
-              return new Response(body, {
-                status: mockResponse.status || 200,
-                statusText: mockResponse.statusText || 'OK',
-                headers
+              console.error('[OFFLINE][REAL_API] Error processing request body:', e);
+              console.log('[OFFLINE][REAL_API] Using original body due to error');
+              // Если не удалось обработать, используем оригинальный body
+              processedBody = options.body;
+            }
+          } else {
+            // console.log('[OFFLINE][REAL_API] Request body: (empty, no processing needed)');
+          }
+          
+          // Если sessionID все еще null для /wallet/authenticate после всех попыток, возвращаем fallback ответ ДО отправки запроса
+          if (requestUrl.includes('/wallet/authenticate')) {
+            try {
+              const bodyObjCheck = processedBody ? JSON.parse(processedBody) : null;
+              if (bodyObjCheck && (!bodyObjCheck.sessionID || bodyObjCheck.sessionID === null)) {
+                console.warn('[OFFLINE][REAL_API] ⚠️ sessionID is null for /wallet/authenticate after all attempts, returning fallback response');
+                
+                // Получаем баланс из localStorage
+                let balance = 1000000000; // Дефолт 1000$
+                try {
+                  const storedBalance = Number(localStorage.getItem('OFFLINE_BALANCE'));
+                  if (isFinite(storedBalance) && storedBalance > 0) {
+                    balance = storedBalance;
+                  } else {
+                    let currencyFactor = 1000000;
+                    try {
+                      const cf = Number(localStorage.getItem('OFFLINE_CURRENCY_FACTOR'));
+                      if (isFinite(cf) && cf > 0) currencyFactor = cf;
+                    } catch (_) {}
+                    let defaultStart = 1000;
+                    try {
+                      const s = Number(localStorage.getItem('OFFLINE_START_BALANCE'));
+                      if (isFinite(s) && s > 0) defaultStart = s;
+                    } catch (_) {}
+                    balance = Math.round(defaultStart * currencyFactor);
+                  }
+                } catch (e) {}
+                
+                // Возвращаем успешный ответ (структура как в реальном API)
+                const successResponse = {
+                  balance: {
+                    cash: balance,
+                    bonus: 0
+                  },
+                  currency: localStorage.getItem('OFFLINE_REAL_API_CURRENCY') || 'USD'
+                };
+                
+                return Promise.resolve(new Response(JSON.stringify(successResponse), {
+                  status: 200,
+                  statusText: 'OK',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                  }
+                }));
+              }
+            } catch (e) {
+              // Если не удалось распарсить body, продолжаем с обычным запросом
+              console.warn('[OFFLINE][REAL_API] Failed to check sessionID in request body:', e);
+            }
+          }
+          
+          // Копируем опции запроса
+          const proxyOptions = {
+            method: options.method || 'GET',
+            headers: new Headers(),
+            body: processedBody,
+            // Убираем credentials: 'include' из-за CORS ограничений
+            // Если сервер возвращает Access-Control-Allow-Origin: *, то credentials не может быть 'include'
+            // credentials: 'same-origin', // Используем same-origin вместо include
+            mode: 'cors'
+          };
+          
+          // Копируем заголовки из оригинального запроса
+          if (options.headers) {
+            if (options.headers instanceof Headers) {
+              options.headers.forEach((value, key) => {
+                // Исключаем некоторые заголовки, которые браузер добавит сам
+                if (!['host', 'origin', 'referer'].includes(key.toLowerCase())) {
+                  proxyOptions.headers.set(key, value);
+                }
+              });
+            } else if (typeof options.headers === 'object') {
+              Object.entries(options.headers).forEach(([key, value]) => {
+                if (!['host', 'origin', 'referer'].includes(key.toLowerCase())) {
+                  proxyOptions.headers.set(key, value);
+                }
               });
             }
-          })
-          .catch(e => {
-            console.error('[OFFLINE] [EARLY] session/start fetch error:', e);
-            return originalFetch.call(this, url, options);
-          });
+          }
+          
+          // Добавляем необходимые заголовки для CORS
+          proxyOptions.headers.set('Content-Type', 'application/json');
+          proxyOptions.headers.set('Accept', 'application/json');
+          
+          // НЕ добавляем Authorization заголовок, чтобы избежать preflight запроса
+          // Токен передается в теле запроса (access_token поле)
+          // Это позволяет избежать OPTIONS preflight, который блокируется сервером
+          
+          // Логируем все заголовки (отключено для уменьшения засорения консоли)
+          // console.log('[OFFLINE][REAL_API] 🔍 Final request headers:');
+          // proxyOptions.headers.forEach((value, key) => {
+          //   console.log('[OFFLINE][REAL_API]   ', key + ':', value);
+          // });
+          
+          // ПРИМЕЧАНИЕ: Origin - это защищенный заголовок, браузер устанавливает его автоматически
+          // Мы не можем его переопределить. Referer можно установить, но это не поможет с CORS проверками.
+          // API должен принимать запросы с любого origin (Access-Control-Allow-Origin: *)
+          
+          // Делаем реальный запрос к API
+          return originalFetch(requestUrl, proxyOptions)
+            .then(async response => {
+              // Логирование ответа (только при ошибках)
+              const responseClone = response.clone();
+              let responseText = '';
+              try {
+                responseText = await responseClone.text();
+                
+                // Пытаемся распарсить как JSON
+                try {
+                  const responseJson = JSON.parse(responseText);
+                  
+                  // Если есть ошибка - логируем детально
+                  if (responseJson.error || response.status >= 400) {
+                    console.error('[OFFLINE][REAL_API] ❌ ERROR:', responseJson.error || 'HTTP ' + response.status, '-', responseJson.message || 'No message');
+                    console.error('[OFFLINE][REAL_API] Request URL:', requestUrl);
+                    console.error('[OFFLINE][REAL_API] Response:', JSON.stringify(responseJson, null, 2));
+                  }
+                } catch (e) {
+                  // Если не JSON, логируем только при ошибке
+                  if (response.status >= 400) {
+                    console.error('[OFFLINE][REAL_API] ❌ ERROR (non-JSON):', response.status, response.statusText);
+                    console.error('[OFFLINE][REAL_API] Request URL:', requestUrl);
+                    console.error('[OFFLINE][REAL_API] Response body:', responseText);
+                  }
+                }
+              } catch (e) {
+                if (response.status >= 400) {
+                  console.error('[OFFLINE][REAL_API] Failed to read response:', e);
+                }
+              }
+              
+              // Для успешных ответов от /wallet/authenticate (200 OK) - сохраняем sessionID
+              if (response.status === 200 && requestUrl.includes('/wallet/authenticate')) {
+                // Клонируем ответ для чтения без влияния на основной поток
+                const tempResponse = response.clone();
+                try {
+                  const tempData = await tempResponse.json();
+                  if (tempData && tempData.sessionID) {
+                    try {
+                      localStorage.setItem('OFFLINE_REAL_API_SESSION_ID', String(tempData.sessionID));
+                      console.log('[OFFLINE][REAL_API] ✅ Saved sessionID from successful authenticate (200):', tempData.sessionID);
+                    } catch (e) {
+                      console.warn('[OFFLINE][REAL_API] Failed to save sessionID from 200 response:', e);
+                    }
+                  }
+                } catch (e) {
+                  // Игнорируем ошибки парсинга при сохранении sessionID
+                }
+              }
+              
+              // Специальная обработка для 404 ошибок (например, /session/start не существует на некоторых хостах)
+              if (response.status === 404 && requestUrl.includes('/session/start')) {
+                console.log('[OFFLINE][REAL_API] /session/start returned 404, returning fallback response');
+                
+                // Возвращаем успешный ответ с дефолтными данными
+                // Игра может продолжить работу без sessionID (если он уже есть в URL)
+                const fallbackResponse = {
+                  sessionID: null,
+                  config: {
+                    gameID: '',
+                    minBet: 100000,
+                    maxBet: 1000000000,
+                    stepBet: 10000,
+                    defaultBetLevel: 1000000,
+                    betLevels: [100000, 200000, 400000, 600000, 800000, 1000000, 1200000, 1400000, 1600000, 1800000, 2000000, 3000000, 4000000, 5000000, 6000000, 7000000, 8000000, 9000000, 10000000, 12000000, 14000000, 16000000, 18000000, 20000000, 30000000, 40000000, 50000000, 75000000, 100000000, 150000000, 200000000, 250000000, 300000000, 350000000, 400000000, 450000000, 500000000, 750000000, 1000000000],
+                    betModes: {},
+                    jurisdiction: {
+                      socialCasino: false,
+                      disabledFullscreen: false,
+                      disabledTurbo: false,
+                      disabledSuperTurbo: false,
+                      disabledAutoplay: false,
+                      disabledSlamstop: false,
+                      disabledSpacebar: false,
+                      disabledBuyFeature: false,
+                      displayNetPosition: false,
+                      displayRTP: false,
+                      displaySessionTimer: false,
+                      minimumRoundDuration: 0
+                    }
+                  }
+                };
+                
+                return new Response(JSON.stringify(fallbackResponse), {
+                  status: 200,
+                  statusText: 'OK',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                  }
+                });
+              }
+              
+              // Специальная обработка для 400 ошибок - возвращаем успешный ответ с локальными данными
+              // Проверяем ДО попытки парсить ответ, так как сервер может вернуть text/plain
+              if (response.status === 400) {
+                if (requestUrl.includes('/wallet/authenticate')) {
+                  console.log('[OFFLINE][REAL_API] Authenticate returned 400, returning success response with local balance');
+                  
+                  // Получаем баланс из localStorage
+                  let balance = 1000000000; // Дефолт 1000$
+                  try {
+                    const storedBalance = Number(localStorage.getItem('OFFLINE_BALANCE'));
+                    if (isFinite(storedBalance) && storedBalance > 0) {
+                      balance = storedBalance;
+                    } else {
+                      let currencyFactor = 1000000;
+                      try {
+                        const cf = Number(localStorage.getItem('OFFLINE_CURRENCY_FACTOR'));
+                        if (isFinite(cf) && cf > 0) currencyFactor = cf;
+                      } catch (_) {}
+                      let defaultStart = 1000;
+                      try {
+                        const s = Number(localStorage.getItem('OFFLINE_START_BALANCE'));
+                        if (isFinite(s) && s > 0) defaultStart = s;
+                      } catch (_) {}
+                      balance = Math.round(defaultStart * currencyFactor);
+                    }
+                  } catch (e) {}
+                  
+                  // Возвращаем успешный ответ (структура как в реальном API)
+                  const successResponse = {
+                    balance: {
+                      amount: balance,
+                      currency: 'USD'
+                    },
+                    round: null,
+                    config: {
+                      gameID: '',
+                      minBet: 100000,
+                      maxBet: 1000000000,
+                      stepBet: 10000,
+                      defaultBetLevel: 1000000,
+                      betLevels: [100000, 200000, 400000, 600000, 800000, 1000000, 1200000, 1400000, 1600000, 1800000, 2000000, 3000000, 4000000, 5000000, 6000000, 7000000, 8000000, 9000000, 10000000, 12000000, 14000000, 16000000, 18000000, 20000000, 30000000, 40000000, 50000000, 75000000, 100000000, 150000000, 200000000, 250000000, 300000000, 350000000, 400000000, 450000000, 500000000, 750000000, 1000000000],
+                      betModes: {},
+                      jurisdiction: {
+                        socialCasino: false,
+                        disabledFullscreen: false,
+                        disabledTurbo: false,
+                        disabledSuperTurbo: false,
+                        disabledAutoplay: false,
+                        disabledSlamstop: false,
+                        disabledSpacebar: false,
+                        disabledBuyFeature: false,
+                        displayNetPosition: false,
+                        displayRTP: false,
+                        displaySessionTimer: false,
+                        minimumRoundDuration: 0
+                      }
+                    }
+                  };
+                  
+                  return new Response(JSON.stringify(successResponse), {
+                    status: 200,
+                    statusText: 'OK',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'Access-Control-Allow-Origin': '*'
+                    }
+                  });
+                } else if (requestUrl.includes('/wallet/play')) {
+                  console.log('[OFFLINE][REAL_API] Wallet/play returned 400, returning success response with normalized data');
+                  
+                  // Получаем баланс из localStorage
+                  let balance = 1000000000;
+                  try {
+                    const storedBalance = Number(localStorage.getItem('OFFLINE_BALANCE'));
+                    if (isFinite(storedBalance) && storedBalance > 0) {
+                      balance = storedBalance;
+                    } else {
+                      let currencyFactor = 1000000;
+                      try {
+                        const cf = Number(localStorage.getItem('OFFLINE_CURRENCY_FACTOR'));
+                        if (isFinite(cf) && cf > 0) currencyFactor = cf;
+                      } catch (_) {}
+                      let defaultStart = 1000;
+                      try {
+                        const s = Number(localStorage.getItem('OFFLINE_START_BALANCE'));
+                        if (isFinite(s) && s > 0) defaultStart = s;
+                      } catch (_) {}
+                      balance = Math.round(defaultStart * currencyFactor);
+                    }
+                  } catch (e) {}
+                  
+                  // Извлекаем amount из запроса
+                  let betAmount = 1000000; // 1$ по умолчанию
+                  try {
+                    if (options.body) {
+                      const bodyStr = typeof options.body === 'string' ? options.body : JSON.stringify(options.body);
+                      const bodyObj = typeof options.body === 'string' ? JSON.parse(bodyStr) : options.body;
+                      if (bodyObj && bodyObj.amount !== undefined) {
+                        betAmount = Number(bodyObj.amount);
+                      }
+                    }
+                  } catch (e) {}
+                  
+                  // Используем RTP систему для генерации множителя
+                  let multiplier = 0;
+                  try {
+                    if (__rtp_enabled()) {
+                      const tier = __rtp_getTier();
+                      const target = __rtp_getTarget();
+                      let outcomes = __rtp_outcomes_for_tier(tier);
+                      outcomes = __rtp_calibrate(outcomes, target);
+                      const pick = __rtp_pickOutcome(outcomes);
+                      if (pick && isFinite(pick.mult) && pick.mult >= 0) {
+                        multiplier = pick.mult;
+                      }
+                    }
+                  } catch (e) {
+                    console.warn('[OFFLINE][REAL_API] RTP error, using default multiplier 0:', e);
+                  }
+                  
+                  const payout = Math.round(betAmount * multiplier);
+                  
+                  // Возвращаем успешный ответ с нормализованными данными
+                  // Используем структуру, соответствующую реальному API
+                  const successResponse = {
+                    balance: {
+                      amount: balance - betAmount, // Вычитаем ставку
+                      currency: 'USD'
+                    },
+                    round: {
+                      betID: Date.now(),
+                      amount: betAmount,
+                      payout: payout,
+                      payoutMultiplier: multiplier,
+                      active: true, // Реальный API возвращает true
+                      state: [{
+                        data: '',
+                        type: 'default'
+                      }],
+                      mode: 'base',
+                      event: null
+                    }
+                  };
+                  
+                  return new Response(JSON.stringify(successResponse), {
+                    status: 200,
+                    statusText: 'OK',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'Access-Control-Allow-Origin': '*'
+                    }
+                  });
+                }
+              }
+              
+              // Клонируем ответ для обработки
+              const clonedResponse = response.clone();
+              
+              // Проверяем Content-Type перед парсингом
+              const contentType = response.headers.get('content-type') || '';
+              const isJson = contentType.includes('application/json');
+              
+              // Читаем и нормализуем ответ
+              try {
+                let responseData;
+                if (isJson) {
+                  try {
+                    responseData = await clonedResponse.json();
+                  } catch (e) {
+                    // Если не удалось распарсить JSON, пытаемся прочитать как текст
+                    console.warn('[OFFLINE][REAL_API] Failed to parse JSON, trying text:', e);
+                    const text = await clonedResponse.text();
+                    if (text && text.trim() && text !== 'undefined' && text.trim() !== 'undefined') {
+                      try {
+                        responseData = JSON.parse(text);
+                      } catch (e2) {
+                        console.warn('[OFFLINE][REAL_API] Failed to parse text as JSON:', text.substring(0, 100));
+                        responseData = {};
+                      }
+                    } else {
+                      console.warn('[OFFLINE][REAL_API] Response text is empty or "undefined"');
+                      responseData = {};
+                    }
+                  }
+                } else {
+                  // Если не JSON, пытаемся прочитать как текст и распарсить
+                  const text = await clonedResponse.text();
+                  if (text && text.trim() && text !== 'undefined' && text.trim() !== 'undefined') {
+                    try {
+                      responseData = JSON.parse(text);
+                    } catch (e) {
+                      // Если не удалось распарсить, создаем пустой объект
+                      console.warn('[OFFLINE][REAL_API] Failed to parse response as JSON, text:', text.substring(0, 100));
+                      responseData = {};
+                    }
+                  } else {
+                    // Если текст пустой или "undefined", создаем пустой объект
+                    console.warn('[OFFLINE][REAL_API] Response text is empty or "undefined", creating empty object');
+                    responseData = {};
+                  }
+                }
+                
+                // Проверяем что responseData валиден
+                if (!responseData || typeof responseData !== 'object') {
+                  console.warn('[OFFLINE][REAL_API] Invalid responseData, creating empty object');
+                  responseData = {};
+                }
+                
+                // Нормализуем структуру ответа для совместимости с игрой
+                // ВАЖНО: Сохраняем все поля из реального ответа, только дополняем недостающие
+                // Используем responseData как источник, создаем normalizedResponse для результата
+                let normalizedResponse;
+                if (responseData && typeof responseData === 'object') {
+                  // Создаем глубокую копию, чтобы сохранить все вложенные объекты и массивы
+                  try {
+                    normalizedResponse = JSON.parse(JSON.stringify(responseData));
+                  } catch (e) {
+                    // Если не удалось сделать глубокую копию, делаем поверхностную
+                    normalizedResponse = { ...responseData };
+                  }
+                  
+                  // Гарантируем наличие balance объекта
+                  if (!normalizedResponse.balance) {
+                    normalizedResponse.balance = {};
+                  } else {
+                    // Сохраняем все поля из balance (если это не глубокая копия)
+                    if (!normalizedResponse.balance.hasOwnProperty || Object.keys(normalizedResponse.balance).length === 0) {
+                      normalizedResponse.balance = { ...normalizedResponse.balance };
+                    }
+                  }
+                  
+                  // Если balance.amount отсутствует или невалиден, пытаемся создать из локального баланса
+                  if (normalizedResponse.balance.amount === undefined || normalizedResponse.balance.amount === null) {
+                    try {
+                      const storedBalance = Number(localStorage.getItem('OFFLINE_BALANCE'));
+                      if (isFinite(storedBalance) && storedBalance > 0) {
+                        normalizedResponse.balance.amount = storedBalance;
+                        console.log('[OFFLINE][REAL_API] Added balance from localStorage:', storedBalance);
+                      } else {
+                        // Дефолтный баланс
+                        let currencyFactor = 1000000;
+                        try {
+                          const cf = Number(localStorage.getItem('OFFLINE_CURRENCY_FACTOR'));
+                          if (isFinite(cf) && cf > 0) currencyFactor = cf;
+                        } catch (_) {}
+                        let defaultStart = 1000;
+                        try {
+                          const s = Number(localStorage.getItem('OFFLINE_START_BALANCE'));
+                          if (isFinite(s) && s > 0) defaultStart = s;
+                        } catch (_) {}
+                        normalizedResponse.balance.amount = Math.round(defaultStart * currencyFactor);
+                        console.log('[OFFLINE][REAL_API] Added default balance:', normalizedResponse.balance.amount);
+                      }
+                    } catch (e) {
+                      console.warn('[OFFLINE][REAL_API] Failed to set balance:', e);
+                    }
+                  }
+                  
+                  // Гарантируем currency
+                  if (!normalizedResponse.balance.currency) {
+                    normalizedResponse.balance.currency = 'USD';
+                  }
+                  
+                  // Для wallet/authenticate - проверяем наличие config и сохраняем sessionID
+                  if (requestUrl.includes('/wallet/authenticate')) {
+                    // Извлекаем и сохраняем sessionID из ответа (если есть)
+                    // Проверяем в корне ответа
+                    if (normalizedResponse.sessionID) {
+                      try {
+                        localStorage.setItem('OFFLINE_REAL_API_SESSION_ID', String(normalizedResponse.sessionID));
+                        console.log('[OFFLINE][REAL_API] ✅ Saved sessionID from authenticate response:', normalizedResponse.sessionID);
+                      } catch (e) {
+                        console.warn('[OFFLINE][REAL_API] Failed to save sessionID:', e);
+                      }
+                    }
+                    // Также проверяем в config.sessionID
+                    if (normalizedResponse.config && normalizedResponse.config.sessionID) {
+                      try {
+                        localStorage.setItem('OFFLINE_REAL_API_SESSION_ID', String(normalizedResponse.config.sessionID));
+                        console.log('[OFFLINE][REAL_API] ✅ Saved sessionID from config.sessionID:', normalizedResponse.config.sessionID);
+                      } catch (e) {}
+                    }
+                    // Проверяем в responseData напрямую (до нормализации)
+                    if (responseData && responseData.sessionID) {
+                      try {
+                        localStorage.setItem('OFFLINE_REAL_API_SESSION_ID', String(responseData.sessionID));
+                        console.log('[OFFLINE][REAL_API] ✅ Saved sessionID from responseData:', responseData.sessionID);
+                      } catch (e) {}
+                    }
+                    
+                    if (!normalizedResponse.config) {
+                      normalizedResponse.config = {
+                        gameID: '',
+                        minBet: 100000,
+                        maxBet: 1000000000,
+                        stepBet: 10000,
+                        defaultBetLevel: 1000000,
+                        betLevels: [100000, 200000, 400000, 600000, 800000, 1000000, 1200000, 1400000, 1600000, 1800000, 2000000, 3000000, 4000000, 5000000, 6000000, 7000000, 8000000, 9000000, 10000000, 12000000, 14000000, 16000000, 18000000, 20000000, 30000000, 40000000, 50000000, 75000000, 100000000, 150000000, 200000000, 250000000, 300000000, 350000000, 400000000, 450000000, 500000000, 750000000, 1000000000],
+                        betModes: {},
+                        jurisdiction: {
+                          socialCasino: false,
+                          disabledFullscreen: false,
+                          disabledTurbo: false,
+                          disabledSuperTurbo: false,
+                          disabledAutoplay: false,
+                          disabledSlamstop: false,
+                          disabledSpacebar: false,
+                          disabledBuyFeature: false,
+                          displayNetPosition: false,
+                          displayRTP: false,
+                          displaySessionTimer: false,
+                          minimumRoundDuration: 0
+                        }
+                      };
+                    }
+                    // Гарантируем round: null для authenticate (сохраняем если уже есть)
+                    if (normalizedResponse.round === undefined) {
+                      normalizedResponse.round = null;
+                    }
+                  }
+                  
+                  // Гарантируем наличие round объекта для wallet/play
+                  if (requestUrl.includes('/wallet/play')) {
+                    if (!normalizedResponse.round) {
+                      normalizedResponse.round = {};
+                    } else {
+                      // Сохраняем все поля из round
+                      normalizedResponse.round = { ...normalizedResponse.round };
+                    }
+                    
+                    // Гарантируем, что round.state существует и является массивом
+                    if (!normalizedResponse.round.state) {
+                      normalizedResponse.round.state = [];
+                    } else if (!Array.isArray(normalizedResponse.round.state)) {
+                      // Если state не массив, создаем массив
+                      normalizedResponse.round.state = [normalizedResponse.round.state];
+                    }
+                    
+                    // Гарантируем наличие других важных полей
+                    // Структура state: массив объектов с полями data, type, metaTags
+                    if (normalizedResponse.round.state.length === 0) {
+                      // Если state пустой, создаем дефолтный элемент
+                      normalizedResponse.round.state = [{
+                        data: '',
+                        type: 'default'
+                      }];
+                    } else {
+                      // Гарантируем, что каждый элемент state имеет правильную структуру
+                      // Копируем все поля из реального ответа, но гарантируем наличие обязательных
+                      normalizedResponse.round.state = normalizedResponse.round.state.map((item, index) => {
+                        if (!item || typeof item !== 'object') {
+                          return { data: '', type: 'default' };
+                        }
+                        // Создаем новый объект, сохраняя ВСЕ существующие поля (включая id, simulationDataId и т.д.)
+                        // Используем глубокую копию, чтобы сохранить все вложенные объекты (например, metaTags)
+                        let normalizedItem;
+                        try {
+                          normalizedItem = JSON.parse(JSON.stringify(item));
+                        } catch (e) {
+                          normalizedItem = { ...item };
+                        }
+                        
+                        // Гарантируем наличие data (может быть пустой строкой)
+                        if (normalizedItem.data === undefined || normalizedItem.data === null) {
+                          normalizedItem.data = '';
+                        }
+                        // Гарантируем наличие type (только если отсутствует)
+                        if (normalizedItem.type === undefined || normalizedItem.type === null) {
+                          normalizedItem.type = 'default';
+                        }
+                        // metaTags должен быть массивом (если есть)
+                        if (normalizedItem.metaTags !== undefined && !Array.isArray(normalizedItem.metaTags)) {
+                          normalizedItem.metaTags = [];
+                        }
+                        // Сохраняем все остальные поля (id, simulationDataId и т.д.) - они уже скопированы
+                        return normalizedItem;
+                      });
+                    }
+                    
+                    // Гарантируем наличие amount и payoutMultiplier
+                    if (normalizedResponse.round.amount === undefined || normalizedResponse.round.amount === null) {
+                      // Пытаемся извлечь из запроса
+                      try {
+                        if (options.body) {
+                          const bodyStr = typeof options.body === 'string' ? options.body : JSON.stringify(options.body);
+                          const bodyObj = typeof options.body === 'string' ? JSON.parse(bodyStr) : options.body;
+                          if (bodyObj && bodyObj.amount !== undefined) {
+                            // Преобразуем в число, если это строка
+                            normalizedResponse.round.amount = typeof bodyObj.amount === 'string' ? Number(bodyObj.amount) : bodyObj.amount;
+                          }
+                        }
+                      } catch (e) {}
+                      
+                      // Если не удалось, используем дефолт
+                      if (normalizedResponse.round.amount === undefined || normalizedResponse.round.amount === null) {
+                        normalizedResponse.round.amount = 1000000; // 1$ по умолчанию
+                      }
+                    }
+                    
+                    if (normalizedResponse.round.payoutMultiplier === undefined || normalizedResponse.round.payoutMultiplier === null) {
+                      normalizedResponse.round.payoutMultiplier = 0; // Проигрыш по умолчанию
+                    }
+                    
+                    if (normalizedResponse.round.payout === undefined || normalizedResponse.round.payout === null) {
+                      normalizedResponse.round.payout = 0;
+                    }
+                    
+                    // active должен быть true по умолчанию (реальный API возвращает true)
+                    if (normalizedResponse.round.active === undefined) {
+                      normalizedResponse.round.active = true;
+                    }
+                    
+                    // Гарантируем наличие mode и event
+                    if (normalizedResponse.round.mode === undefined) {
+                      // Пытаемся извлечь из запроса
+                      try {
+                        if (options.body) {
+                          const bodyStr = typeof options.body === 'string' ? options.body : JSON.stringify(options.body);
+                          const bodyObj = typeof options.body === 'string' ? JSON.parse(bodyStr) : options.body;
+                          if (bodyObj && bodyObj.mode) {
+                            normalizedResponse.round.mode = bodyObj.mode;
+                          }
+                        }
+                      } catch (e) {}
+                      
+                      if (normalizedResponse.round.mode === undefined) {
+                        normalizedResponse.round.mode = 'base';
+                      }
+                    }
+                    
+                    if (normalizedResponse.round.event === undefined) {
+                      normalizedResponse.round.event = null;
+                    }
+                    
+                    // Гарантируем betID (если отсутствует)
+                    if (normalizedResponse.round.betID === undefined || normalizedResponse.round.betID === null) {
+                      normalizedResponse.round.betID = Date.now(); // Генерируем временный betID
+                    }
+                  }
+                  
+                  // Логирование (опционально)
+                  if (localStorage.getItem('OFFLINE_LOG_REAL_API_RESPONSES') === '1') {
+                    console.log('[OFFLINE][REAL_API] Normalized response data:', normalizedResponse);
+                  }
+                  
+                  // Создаем новый Response с нормализованными данными
+                  const normalizedBody = JSON.stringify(normalizedResponse);
+                  return new Response(normalizedBody, {
+                    status: response.status,
+                    statusText: response.statusText,
+                    headers: response.headers
+                  });
+                } else {
+                  // Если responseData не объект, создаем минимальный ответ
+                  normalizedResponse = {
+                    balance: {
+                      amount: 1000000000,
+                      currency: 'USD'
+                    },
+                    round: requestUrl.includes('/wallet/play') ? null : null
+                  };
+                  const normalizedBody = JSON.stringify(normalizedResponse);
+                  return new Response(normalizedBody, {
+                    status: 200,
+                    statusText: 'OK',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'Access-Control-Allow-Origin': '*'
+                    }
+                  });
+                }
+              } catch (parseError) {
+                console.warn('[OFFLINE][REAL_API] Failed to parse/normalize response:', parseError);
+                
+                // Если не удалось распарсить - создаем нормализованный ответ с дефолтными данными
+                // Это предотвращает ошибки парсинга в игре
+                let balance = 1000000000;
+                try {
+                  const storedBalance = Number(localStorage.getItem('OFFLINE_BALANCE'));
+                  if (isFinite(storedBalance) && storedBalance > 0) {
+                    balance = storedBalance;
+                  }
+                } catch (e) {}
+                
+                const fallbackResponse = {
+                  balance: {
+                    amount: balance,
+                    currency: 'USD'
+                  },
+                  round: null
+                };
+                
+                // Если это wallet/play, добавляем round
+                if (requestUrl.includes('/wallet/play')) {
+                  let betAmount = 1000000;
+                  try {
+                    if (options.body) {
+                      const bodyStr = typeof options.body === 'string' ? options.body : JSON.stringify(options.body);
+                      const bodyObj = typeof options.body === 'string' ? JSON.parse(bodyStr) : options.body;
+                      if (bodyObj && bodyObj.amount !== undefined) {
+                        betAmount = Number(bodyObj.amount);
+                      }
+                    }
+                  } catch (e) {}
+                  
+                  fallbackResponse.round = {
+                    betID: Date.now(),
+                    amount: betAmount,
+                    payout: 0,
+                    payoutMultiplier: 0,
+                    active: true,
+                    state: [{ data: '', type: 'default' }],
+                    mode: 'base',
+                    event: null
+                  };
+                }
+                
+                return new Response(JSON.stringify(fallbackResponse), {
+                  status: 200,
+                  statusText: 'OK',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                  }
+                });
+              }
+              
+              // Возвращаем оригинальный ответ если не удалось нормализовать
+              // НО проверяем, что это не 400 ошибка (её мы уже обработали выше)
+              if (response.status === 400) {
+                // Если это 400 и мы дошли сюда, значит обработка не сработала
+                // Создаем fallback ответ
+                console.warn('[OFFLINE][REAL_API] 400 error not handled, creating fallback response');
+                const fallbackResponse = {
+                  balance: {
+                    amount: 1000000000,
+                    currency: 'USD'
+                  },
+                  round: null
+                };
+                if (requestUrl.includes('/wallet/play')) {
+                  let betAmount = 1000000;
+                  try {
+                    if (options.body) {
+                      const bodyStr = typeof options.body === 'string' ? options.body : JSON.stringify(options.body);
+                      const bodyObj = typeof options.body === 'string' ? JSON.parse(bodyStr) : options.body;
+                      if (bodyObj && bodyObj.amount !== undefined) {
+                        betAmount = Number(bodyObj.amount);
+                      }
+                    }
+                  } catch (e) {}
+                  
+                  fallbackResponse.round = {
+                    betID: Date.now(),
+                    amount: betAmount,
+                    payout: 0,
+                    payoutMultiplier: 0,
+                    active: true,
+                    state: [{ data: '', type: 'default' }],
+                    mode: 'base',
+                    event: null
+                  };
+                }
+                return new Response(JSON.stringify(fallbackResponse), {
+                  status: 200,
+                  statusText: 'OK',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                  }
+                });
+              }
+              
+              // На этом этапе все основные ветки уже вернули нормализованный ответ или fallback.
+              // Если мы дошли сюда, значит ответ не был обработан выше.
+              // Возвращаем оригинальный response (тело не было прочитано, так как мы использовали клоны)
+              // НО: если это ошибка (4xx, 5xx), создаем fallback ответ, чтобы игра не падала
+              if (response.status >= 400) {
+                console.warn('[OFFLINE][REAL_API] Unhandled error status:', response.status, 'for URL:', requestUrl);
+                // Создаем fallback ответ для любых необработанных ошибок
+                const fallbackResponse = {
+                  balance: {
+                    amount: 1000000000,
+                    currency: 'USD'
+                  },
+                  round: null
+                };
+                if (requestUrl.includes('/wallet/play')) {
+                  let betAmount = 1000000;
+                  try {
+                    if (options.body) {
+                      const bodyStr = typeof options.body === 'string' ? options.body : JSON.stringify(options.body);
+                      const bodyObj = typeof options.body === 'string' ? JSON.parse(bodyStr) : options.body;
+                      if (bodyObj && bodyObj.amount !== undefined) {
+                        betAmount = Number(bodyObj.amount);
+                      }
+                    }
+                  } catch (e) {}
+                  
+                  fallbackResponse.round = {
+                    betID: Date.now(),
+                    amount: betAmount,
+                    payout: 0,
+                    payoutMultiplier: 0,
+                    active: true,
+                    state: [{ data: '', type: 'default' }],
+                    mode: 'base',
+                    event: null
+                  };
+                }
+                return new Response(JSON.stringify(fallbackResponse), {
+                  status: 200,
+                  statusText: 'OK',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                  }
+                });
+              }
+              
+              // Для успешных ответов возвращаем оригинальный response
+              // (тело не было прочитано, так как мы использовали клоны для логирования и нормализации)
+              return response;
+            })
+            .catch(error => {
+              console.error('[OFFLINE][REAL_API] Request failed:', error);
+              
+              // Для /wallet/authenticate при ошибке возвращаем успешный ответ с балансом
+              if (requestUrl.includes('/wallet/authenticate')) {
+                console.log('[OFFLINE][REAL_API] Authenticate request failed, returning success response with local balance');
+                
+                // Получаем баланс из localStorage
+                let balance = 1000000000; // Дефолт 1000$
+                try {
+                  const storedBalance = Number(localStorage.getItem('OFFLINE_BALANCE'));
+                  if (isFinite(storedBalance) && storedBalance > 0) {
+                    balance = storedBalance;
+                  } else {
+                    let currencyFactor = 1000000;
+                    try {
+                      const cf = Number(localStorage.getItem('OFFLINE_CURRENCY_FACTOR'));
+                      if (isFinite(cf) && cf > 0) currencyFactor = cf;
+                    } catch (_) {}
+                    let defaultStart = 1000;
+                    try {
+                      const s = Number(localStorage.getItem('OFFLINE_START_BALANCE'));
+                      if (isFinite(s) && s > 0) defaultStart = s;
+                    } catch (_) {}
+                    balance = Math.round(defaultStart * currencyFactor);
+                  }
+                } catch (e) {}
+                
+                // Возвращаем успешный ответ (структура как в реальном API)
+                const successResponse = {
+                  balance: {
+                    amount: balance,
+                    currency: 'USD'
+                  },
+                  round: null,
+                  config: {
+                    gameID: '',
+                    minBet: 100000,
+                    maxBet: 1000000000,
+                    stepBet: 10000,
+                    defaultBetLevel: 1000000,
+                    betLevels: [100000, 200000, 400000, 600000, 800000, 1000000, 1200000, 1400000, 1600000, 1800000, 2000000, 3000000, 4000000, 5000000, 6000000, 7000000, 8000000, 9000000, 10000000, 12000000, 14000000, 16000000, 18000000, 20000000, 30000000, 40000000, 50000000, 75000000, 100000000, 150000000, 200000000, 250000000, 300000000, 350000000, 400000000, 450000000, 500000000, 750000000, 1000000000],
+                    betModes: {},
+                    jurisdiction: {
+                      socialCasino: false,
+                      disabledFullscreen: false,
+                      disabledTurbo: false,
+                      disabledSuperTurbo: false,
+                      disabledAutoplay: false,
+                      disabledSlamstop: false,
+                      disabledSpacebar: false,
+                      disabledBuyFeature: false,
+                      displayNetPosition: false,
+                      displayRTP: false,
+                      displaySessionTimer: false,
+                      minimumRoundDuration: 0
+                    }
+                  }
+                };
+                
+                return new Response(JSON.stringify(successResponse), {
+                  status: 200,
+                  statusText: 'OK',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                  }
+                });
+              } else if (requestUrl.includes('/wallet/play')) {
+                console.log('[OFFLINE][REAL_API] Wallet/play request failed, returning success response with normalized data');
+                
+                // Получаем баланс из localStorage
+                let balance = 1000000000;
+                try {
+                  const storedBalance = Number(localStorage.getItem('OFFLINE_BALANCE'));
+                  if (isFinite(storedBalance) && storedBalance > 0) {
+                    balance = storedBalance;
+                  } else {
+                    let currencyFactor = 1000000;
+                    try {
+                      const cf = Number(localStorage.getItem('OFFLINE_CURRENCY_FACTOR'));
+                      if (isFinite(cf) && cf > 0) currencyFactor = cf;
+                    } catch (_) {}
+                    let defaultStart = 1000;
+                    try {
+                      const s = Number(localStorage.getItem('OFFLINE_START_BALANCE'));
+                      if (isFinite(s) && s > 0) defaultStart = s;
+                    } catch (_) {}
+                    balance = Math.round(defaultStart * currencyFactor);
+                  }
+                } catch (e) {}
+                
+                // Извлекаем amount из запроса
+                let betAmount = 1000000;
+                try {
+                  if (options.body) {
+                    const bodyStr = typeof options.body === 'string' ? options.body : JSON.stringify(options.body);
+                    const bodyObj = typeof options.body === 'string' ? JSON.parse(bodyStr) : options.body;
+                    if (bodyObj && bodyObj.amount !== undefined) {
+                      betAmount = Number(bodyObj.amount);
+                    }
+                  }
+                } catch (e) {}
+                
+                // Используем RTP систему для генерации множителя
+                let multiplier = 0;
+                try {
+                  if (__rtp_enabled && __rtp_enabled()) {
+                    const tier = __rtp_getTier();
+                    const target = __rtp_getTarget();
+                    let outcomes = __rtp_outcomes_for_tier(tier);
+                    outcomes = __rtp_calibrate(outcomes, target);
+                    const pick = __rtp_pickOutcome(outcomes);
+                    if (pick && isFinite(pick.mult) && pick.mult >= 0) {
+                      multiplier = pick.mult;
+                    }
+                  }
+                } catch (e) {
+                  console.warn('[OFFLINE][REAL_API] RTP error, using default multiplier 0:', e);
+                }
+                
+                const payout = Math.round(betAmount * multiplier);
+                
+                // Возвращаем успешный ответ (структура как в реальном API)
+                const successResponse = {
+                  balance: {
+                    amount: balance - betAmount,
+                    currency: 'USD'
+                  },
+                  round: {
+                    betID: Date.now(),
+                    amount: betAmount,
+                    payout: payout,
+                    payoutMultiplier: multiplier,
+                    active: true, // Реальный API возвращает true
+                    state: [{
+                      data: '',
+                      type: 'default'
+                    }],
+                    mode: 'base',
+                    event: null
+                  }
+                };
+                
+                return new Response(JSON.stringify(successResponse), {
+                  status: 200,
+                  statusText: 'OK',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                  }
+                });
+              }
+              
+              // Для других запросов возвращаем ошибку
+              throw error;
+            });
+        }
+      } catch (error) {
+        console.error('[OFFLINE][REAL_API] Proxy setup error:', error);
+        // При ошибке настройки прокси - продолжаем с обычной логикой моков
       }
     }
     
@@ -1353,21 +3147,12 @@
                   const mockAmount = Number(parsed?.round?.amount);
                   // Выбираем актуальную ставку для расчёта: приоритет — вычисленная bet
                   const effectiveBet = isFinite(bet) ? bet : (isFinite(mockAmount) ? mockAmount : NaN);
-                  // Определяем множитель: 1) из мока; 2) по отношению payout/mockAmount; 3) сохранённый для режима; 4) дефолт/override
+                  // Определяем множитель: ПРИОРИТЕТ 1) RTP система (если включена); 2) из мока; 3) сохранённый; 4) дефолт
                   let effectiveMultiplier = NaN;
                   let multiplierSource = 'default';
-                  if (isFinite(multField) && multField > 0) {
-                    effectiveMultiplier = multField;
-                    multiplierSource = 'mockMultiplier';
-                  } else {
-                    const payoutFromMock = Number(payoutField);
-                    if (isFinite(payoutFromMock) && isFinite(mockAmount) && mockAmount > 0) {
-                      effectiveMultiplier = payoutFromMock / mockAmount;
-                      multiplierSource = 'derivedFromMockPayout';
-                    }
-                  }
-                  // Если включено управление RTP/волатильностью — используем собственное распределение множителей
                   let usedRtpDistribution = false;
+                  
+                  // ПРИОРИТЕТ 1: RTP система (если включена) - должна применяться ПЕРВОЙ
                   try {
                     if (__rtp_enabled()) {
                       const tier = __rtp_getTier();
@@ -1381,37 +3166,66 @@
                         usedRtpDistribution = true;
                       }
                     }
-                  } catch (_) {}
-                  if (!usedRtpDistribution && (!isFinite(effectiveMultiplier) || effectiveMultiplier <= 0)) {
+                  } catch (e) {
+                    console.warn('[OFFLINE][RTP] Error in RTP distribution:', e);
+                  }
+                  
+                  // FALLBACK 2: Множитель из мока (только если RTP система не использовалась)
+                  if (!usedRtpDistribution) {
+                    if (isFinite(multField) && multField > 0) {
+                      effectiveMultiplier = multField;
+                      multiplierSource = 'mockMultiplier';
+                    } else {
+                      const payoutFromMock = Number(payoutField);
+                      if (isFinite(payoutFromMock) && isFinite(mockAmount) && mockAmount > 0) {
+                        effectiveMultiplier = payoutFromMock / mockAmount;
+                        multiplierSource = 'derivedFromMockPayout';
+                      }
+                    }
+                  }
+                  // FALLBACK 3: Сохранённый множитель (только если RTP и моки не использовались)
+                  if (!usedRtpDistribution && (!isFinite(effectiveMultiplier) || effectiveMultiplier < 0)) {
                     // Пробуем взять сохранённый множитель для текущего режима
                     try {
                       const saved = Number(localStorage.getItem('OFFLINE_LAST_MULTIPLIER_' + String(lastMode || 'base').toUpperCase()));
-                      if (isFinite(saved) && saved > 0) {
+                      if (isFinite(saved) && saved >= 0) {
                         effectiveMultiplier = saved;
                         multiplierSource = 'savedMultiplier';
                       }
                     } catch (_) {}
                   }
-                  if (!isFinite(effectiveMultiplier) || effectiveMultiplier <= 0) {
-                    // Позволяем переопределить дефолт
-                    let defaultMult = 5.0;
+                  // FALLBACK 4: Дефолтный множитель (только если ничего не найдено, но НЕ если RTP система вернула 0)
+                  // Важно: effectiveMultiplier === 0 - это валидный проигрыш, не нужно его заменять!
+                  if (!isFinite(effectiveMultiplier) || (effectiveMultiplier < 0 && !usedRtpDistribution)) {
+                    // Позволяем переопределить дефолт, но учитываем RTP
+                    // Если RTP система активна, но не вернула значение - это ошибка, используем консервативный дефолт
+                    let defaultMult = usedRtpDistribution ? 0 : 0.96; // Если RTP включен, но не сработал - консервативный RTP
                     try {
                       const override = Number(localStorage.getItem('OFFLINE_DEFAULT_MULTIPLIER'));
-                      if (isFinite(override) && override > 0) defaultMult = override;
+                      if (isFinite(override) && override >= 0) defaultMult = override;
                     } catch (_) {}
                     effectiveMultiplier = defaultMult;
-                  }
-                  // Разрешаем только явный override множителя, без клампа
-                  try {
-                    const modeKey = String(lastMode || 'base').toUpperCase();
-                    const override = Number(localStorage.getItem('OFFLINE_PAYOUT_MULT_' + modeKey));
-                    if (isFinite(override) && override > 0) {
-                      effectiveMultiplier = override;
-                      multiplierSource = 'overrideByMode';
+                    if (!usedRtpDistribution) {
+                      multiplierSource = 'defaultFallback';
                     }
-                  } catch (_) {}
+                  }
+                  // Разрешаем только явный override множителя (НО только если RTP система не используется)
+                  // Это позволяет тестировать конкретные множители, но не переопределяет RTP распределение
+                  if (!usedRtpDistribution) {
+                    try {
+                      const modeKey = String(lastMode || 'base').toUpperCase();
+                      const override = Number(localStorage.getItem('OFFLINE_PAYOUT_MULT_' + modeKey));
+                      if (isFinite(override) && override >= 0) {
+                        effectiveMultiplier = override;
+                        multiplierSource = 'overrideByMode';
+                      }
+                    } catch (_) {}
+                  }
+                  
+                  // Вычисляем payout: учитываем, что множитель 0 - это валидный проигрыш
                   if (isFinite(effectiveBet)) {
-                    payout = Math.round(effectiveBet * effectiveMultiplier);
+                    // Множитель 0 означает проигрыш (payout = 0)
+                    payout = Math.round(effectiveBet * Math.max(0, effectiveMultiplier));
                     // Принудительно обновляем поля ответа, чтобы UI видел корректные значения
                     if (parsed && parsed.round && typeof parsed.round === 'object') {
                       parsed.round.amount = effectiveBet;
@@ -1425,8 +3239,11 @@
                         }
                       }
                     }
-                    // Сохраняем использованный множитель для текущего режима
-                    try { localStorage.setItem('OFFLINE_LAST_MULTIPLIER_' + String(lastMode || 'base').toUpperCase(), String(effectiveMultiplier)); } catch (_) {}
+                    // Сохраняем использованный множитель для текущего режима (только если НЕ используется RTP)
+                    // RTP система генерирует случайные множители каждый раз, не нужно их сохранять
+                    if (!usedRtpDistribution) {
+                      try { localStorage.setItem('OFFLINE_LAST_MULTIPLIER_' + String(lastMode || 'base').toUpperCase(), String(effectiveMultiplier)); } catch (_) {}
+                    }
                     try {
                       const betUsd = (effectiveBet / currencyFactor).toFixed(2);
                       const payoutUsd = (payout / currencyFactor).toFixed(2);

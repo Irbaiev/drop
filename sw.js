@@ -1,6 +1,8 @@
 /* 🔧 Enhanced Service Worker - auto-generated */
 const CACHE_NAME = 'drop-the-boss-v1';
-const GAME_QS = 'access_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzZXNzaW9uIjp7InBsYXllcklkIjoiZGVtbzp0b3BzcGluLXN0d2FsbGV0OjExMzU0MDc3IiwiZ2FtZUlkIjoidHMtdGctcGFwZXJwbGFuZSIsImlzUGxheUZvckZ1biI6dHJ1ZSwiY3VycmVuY3kiOiJVU0QiLCJmb3JjZUNvbmZpZyI6IiIsImlwQWRkcmVzcyI6Ijc4LjQwLjExNi4xMzYiLCJzdWJQYXJ0bmVySUQiOiIiLCJjYWxsQmFja1VSTCI6IiJ9fQ.LOsJIU1o3dul065zHwLrKXI4UPMoVcE1wfmwLwfjBKA&play_for_fun=true&language=en&currency=USD';
+// GAME_QS теперь генерируется динамически в index.html, поэтому здесь используем шаблон
+// Если токен не найден в запросе, будет использован этот fallback
+const GAME_QS_FALLBACK = 'access_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzZXNzaW9uIjp7InBsYXllcklkIjoiZGVtbzp0b3BzcGluLXN0d2FsbGV0OjExMzU0MDc3IiwiZ2FtZUlkIjoidHMtdGctcGFwZXJwbGFuZSIsImlzUGxheUZvckZ1biI6dHJ1ZSwiY3VycmVuY3kiOiJVU0QiLCJmb3JjZUNvbmZpZyI6IiIsImlwQWRkcmVzcyI6Ijc4LjQwLjExNi4xMzYiLCJzdWJQYXJ0bmVySUQiOiIiLCJjYWxsQmFja1VSTCI6IiJ9fQ.LOsJIU1o3dul065zHwLrKXI4UPMoVcE1wfmwLwfjBKA&play_for_fun=true&language=en&currency=USD';
 
 // Расширенный список аналитики для блокировки
 const ANALYTICS = [
@@ -15,10 +17,194 @@ const ANALYTICS = [
 
 // Bootstrap-shim с полными защитами
 const inject = `<script>(function(){
-  // 0) Гарантируем query-string
+  // 0) Гарантируем query-string (токен теперь генерируется динамически в index.html)
+  // Если query-string отсутствует, используем fallback
   if (!location.search) {
-    history.replaceState(null,'',location.pathname+'?${GAME_QS}');
+    // Пытаемся получить токен из localStorage (новый ключ для пользовательского токена)
+    let token = '';
+    try {
+      // Сначала пробуем новый ключ для пользовательского токена
+      token = localStorage.getItem('OFFLINE_USER_ACCESS_TOKEN') || 
+              localStorage.getItem('OFFLINE_REAL_API_ACCESS_TOKEN') || '';
+    } catch(e) {}
+    if (token) {
+      history.replaceState(null,'',location.pathname+'?access_token='+encodeURIComponent(token)+'&play_for_fun=true&language=en&currency=USD');
+    } else {
+      history.replaceState(null,'',location.pathname+'?'+GAME_QS_FALLBACK);
+    }
   }
+  
+  // 0.5) Добавляем sessionID в URL, если он есть в localStorage, но отсутствует в URL
+  // ВАЖНО: Используем sessionID из URL в приоритете, localStorage только как fallback
+  try {
+    const urlParams = new URLSearchParams(location.search);
+    const urlSessionID = urlParams.get('sessionID');
+    
+    if (urlSessionID) {
+      // Если sessionID есть в URL, обновляем localStorage (новый sessionID имеет приоритет)
+      localStorage.setItem('LAST_SESSION_ID', urlSessionID);
+      const rgsUrl = urlParams.get('rgs_url');
+      if (rgsUrl) {
+        localStorage.setItem('LAST_RGS_URL', rgsUrl);
+      }
+      console.log('[OFFLINE] ✅ Using sessionID from URL:', urlSessionID.substring(0, 20) + '...');
+    } else {
+      // Если sessionID нет в URL, пробуем взять из localStorage
+      const savedSessionID = localStorage.getItem('LAST_SESSION_ID');
+      if (savedSessionID && savedSessionID.trim()) {
+        urlParams.set('sessionID', savedSessionID.trim());
+        const savedRgsUrl = localStorage.getItem('LAST_RGS_URL');
+        if (savedRgsUrl && !urlParams.has('rgs_url')) {
+          urlParams.set('rgs_url', savedRgsUrl);
+        }
+        const newSearch = urlParams.toString();
+        history.replaceState(null, '', location.pathname + '?' + newSearch);
+        console.log('[OFFLINE] ✅ Added sessionID to URL from localStorage:', savedSessionID.substring(0, 20) + '...');
+        console.log('[OFFLINE] 🔍 Updated URL:', location.href.substring(0, 150) + '...');
+      } else {
+        console.warn('[OFFLINE] ⚠️ No sessionID in URL and localStorage. Game may not work correctly.');
+      }
+    }
+  } catch(e) {
+    console.warn('[OFFLINE] ❌ Failed to add sessionID to URL:', e);
+  }
+  
+  // 0.6) Слушаем postMessage от родительского окна для получения sessionID и access_token
+  console.log('[OFFLINE] 🎧 PostMessage listener установлен в', location.href);
+  console.log('[OFFLINE] 🔍 Текущий sessionID в URL:', new URLSearchParams(location.search).get('sessionID') || 'ОТСУТСТВУЕТ');
+  window.addEventListener('message', function(event) {
+    // Логируем ВСЕ сообщения для отладки (даже без type)
+    console.log('[OFFLINE] 📨 Received ANY postMessage:', {
+      origin: event.origin,
+      source: event.source ? 'window' : 'null',
+      data: event.data,
+      hasType: !!(event.data && event.data.type)
+    });
+    
+    // Логируем сообщения с type
+    if (event.data && event.data.type) {
+      console.log('[OFFLINE] 📨 Received postMessage with type:', event.data.type, event.data);
+    }
+    
+    if (event.data && event.data.type === 'SET_SESSION_ID') {
+      try {
+        const sessionID = event.data.sessionID;
+        const rgsUrl = event.data.rgsUrl;
+        const accessToken = event.data.accessToken; // Новый access_token
+        const force = event.data.force === true; // Флаг принудительного обновления
+        
+        console.log('[OFFLINE] 🔄 Processing SET_SESSION_ID:', {
+          sessionID: sessionID ? sessionID.substring(0, 20) + '...' : 'null',
+          rgsUrl: rgsUrl || 'null',
+          accessToken: accessToken ? accessToken.substring(0, 50) + '...' : 'null',
+          force: force
+        });
+        
+        // Обновляем URL
+        const urlParams = new URLSearchParams(location.search);
+        const currentSessionID = urlParams.get('sessionID');
+        const currentAccessToken = urlParams.get('access_token');
+        let needsUpdate = false;
+        
+        // ВАЖНО: Токен пользователя НЕ должен перезаписываться из postMessage
+        // Проверяем, есть ли уже постоянный токен пользователя
+        let existingUserToken = null;
+        try {
+          existingUserToken = localStorage.getItem('OFFLINE_USER_ACCESS_TOKEN');
+        } catch(e) {}
+        
+        // Обновляем access_token в URL только если:
+        // 1. Токен передан через postMessage
+        // 2. У пользователя еще нет постоянного токена (первый запуск)
+        // 3. ИЛИ переданный токен совпадает с постоянным токеном пользователя
+        if (accessToken) {
+          if (!existingUserToken) {
+            // Первый запуск - сохраняем токен как постоянный
+            try {
+              localStorage.setItem('OFFLINE_USER_ACCESS_TOKEN', accessToken);
+              localStorage.setItem('OFFLINE_REAL_API_ACCESS_TOKEN', accessToken);
+              console.log('[OFFLINE] 💾 Saved new permanent access_token to localStorage (first time)');
+            } catch(e) {
+              console.warn('[OFFLINE] ⚠️ Failed to save access_token to localStorage:', e);
+            }
+          } else if (accessToken === existingUserToken) {
+            // Токен совпадает с постоянным - просто обновляем URL
+            console.log('[OFFLINE] ℹ️ access_token matches permanent user token, updating URL only');
+          } else {
+            // Токен отличается от постоянного - НЕ перезаписываем постоянный токен
+            console.log('[OFFLINE] ⚠️ Ignoring access_token from postMessage - using permanent user token instead');
+            accessToken = existingUserToken; // Используем постоянный токен
+          }
+          
+          // Обновляем URL с правильным токеном
+          if (accessToken !== currentAccessToken) {
+            urlParams.set('access_token', accessToken);
+            needsUpdate = true;
+            console.log('[OFFLINE] ✅ Updated access_token in URL:', accessToken.substring(0, 30) + '...');
+          } else {
+            console.log('[OFFLINE] ℹ️ access_token in URL already correct, skipping update');
+          }
+        }
+        
+        // Обновляем sessionID, если он передан
+        if (sessionID) {
+          // Сохраняем в localStorage
+          try {
+            localStorage.setItem('LAST_SESSION_ID', sessionID);
+            localStorage.setItem('LAST_RGS_URL', rgsUrl || '');
+            console.log('[OFFLINE] 💾 Saved sessionID to localStorage:', sessionID.substring(0, 20) + '...');
+          } catch(e) {
+            console.warn('[OFFLINE] ⚠️ Failed to save sessionID to localStorage:', e);
+          }
+          
+          // Если sessionID отличается или установлен флаг force, обновляем URL
+          if (force || !currentSessionID || currentSessionID !== sessionID) {
+            urlParams.set('sessionID', sessionID);
+            if (rgsUrl) {
+              urlParams.set('rgs_url', rgsUrl);
+            }
+            needsUpdate = true;
+            console.log('[OFFLINE] ✅ Received sessionID via postMessage and ' + (force ? 'FORCED update' : 'added to') + ' URL:', {
+              old: currentSessionID ? currentSessionID.substring(0, 20) + '...' : 'null',
+              new: sessionID.substring(0, 20) + '...'
+            });
+            
+            // ВАЖНО: Если sessionID изменился, ОБЯЗАТЕЛЬНО перезагружаем страницу
+            // Это нужно для обновления баланса с новым sessionID
+            if (currentSessionID && currentSessionID !== sessionID) {
+              console.log('[OFFLINE] 🔄 SessionID changed from', currentSessionID.substring(0, 20) + '...', 'to', sessionID.substring(0, 20) + '...');
+              console.log('[OFFLINE] 🔄 Reloading page to update balance with new sessionID...');
+              // Сначала обновляем URL, потом перезагружаем
+              urlParams.set('sessionID', sessionID);
+              if (rgsUrl) {
+                urlParams.set('rgs_url', rgsUrl);
+              }
+              const newSearch = urlParams.toString();
+              history.replaceState(null, '', location.pathname + '?' + newSearch);
+              console.log('[OFFLINE] ✅ URL updated, reloading in 50ms...');
+              setTimeout(() => {
+                location.reload();
+              }, 50);
+              return; // Не продолжаем, так как будет перезагрузка
+            }
+          } else {
+            console.log('[OFFLINE] ℹ️ Received sessionID via postMessage (already in URL, same value):', sessionID.substring(0, 20) + '...');
+          }
+        }
+        
+        // Применяем изменения в URL, если были обновления
+        if (needsUpdate) {
+          const newSearch = urlParams.toString();
+          history.replaceState(null, '', location.pathname + '?' + newSearch);
+          console.log('[OFFLINE] ✅ URL updated with new sessionID and/or access_token. New URL:', location.href.substring(0, 150) + '...');
+        } else {
+          console.log('[OFFLINE] ℹ️ No URL update needed');
+        }
+      } catch(e) {
+        console.error('[OFFLINE] ❌ Failed to process SET_SESSION_ID message:', e);
+      }
+    }
+  });
 
   // 1) Мягкие дефолты
   window.ingenuity = window.ingenuity || {};
@@ -176,9 +362,65 @@ self.addEventListener('fetch', (e) => {
     e.respondWith(
       fetch(e.request).then(response => {
         if (!response.ok) return response;
+        // Сохраняем query string из оригинального запроса
+        const originalUrl = e.request.url;
+        const originalUrlObj = new URL(originalUrl);
+        const queryString = originalUrlObj.search;
+        
+        // Если есть query string в оригинальном запросе, передаем его в инжект-скрипт
+        let injectScript = inject;
+        if (queryString && queryString.length > 1) {
+          // Извлекаем sessionID из query string, если он есть
+          const originalParams = new URLSearchParams(queryString.substring(1));
+          const sessionID = originalParams.get('sessionID');
+          const rgsUrl = originalParams.get('rgs_url');
+          
+          // Модифицируем инжект-скрипт, чтобы он использовал оригинальный query string
+          injectScript = inject.replace(
+            'if (!location.search) {',
+            `// Восстанавливаем query string из оригинального запроса
+            const originalQuery = ${JSON.stringify(queryString.substring(1))};
+            if (originalQuery) {
+              // Сохраняем sessionID в localStorage, если он есть в оригинальном запросе
+              try {
+                const originalParams = new URLSearchParams(originalQuery);
+                const sessionID = originalParams.get('sessionID');
+                const rgsUrl = originalParams.get('rgs_url');
+                if (sessionID) {
+                  localStorage.setItem('LAST_SESSION_ID', sessionID);
+                  if (rgsUrl) {
+                    localStorage.setItem('LAST_RGS_URL', rgsUrl);
+                  }
+                }
+              } catch(e) {}
+              
+              // Восстанавливаем query string в URL
+              if (!location.search || location.search.length <= 1) {
+                history.replaceState(null, '', location.pathname + '?' + originalQuery);
+                // После history.replaceState location.search должен обновиться, но проверим
+                const currentSearch = new URL(location.href).search;
+                if (!currentSearch || currentSearch.length <= 1) {
+                  // Если все еще нет query string, используем setTimeout для повторной попытки
+                  setTimeout(function() {
+                    if (!location.search || location.search.length <= 1) {
+                      history.replaceState(null, '', location.pathname + '?' + originalQuery);
+                    }
+                  }, 0);
+                }
+              }
+            }
+            if (!location.search) {`
+          );
+        }
+        
         return response.text().then(html => {
-          const injected = html.replace('</head>', inject + '</head>');
-          return new Response(injected, { headers: response.headers });
+          const injected = html.replace('</head>', injectScript + '</head>');
+          const newResponse = new Response(injected, { headers: response.headers });
+          // Сохраняем оригинальный URL в заголовке для отладки
+          if (queryString) {
+            newResponse.headers.set('X-Original-Query', queryString);
+          }
+          return newResponse;
         });
       }).catch(() => caches.match(e.request))
     );
@@ -186,8 +428,10 @@ self.addEventListener('fetch', (e) => {
   }
 
   // API запросы - обработка моков
-  if (url.pathname.includes('/api/') || url.pathname.includes('/frontendService/') || 
-      url.pathname.includes('/wallet/') || url.pathname.includes('/session/')) {
+  // НО: если это внешний API (не наш origin), пропускаем его (offline.js обработает)
+  const isExternalApi = url.origin !== location.origin;
+  if (!isExternalApi && (url.pathname.includes('/api/') || url.pathname.includes('/frontendService/') || 
+      url.pathname.includes('/wallet/') || url.pathname.includes('/session/'))) {
     e.respondWith((async () => {
       try {
         // Определяем базовый путь из URL запроса
@@ -306,9 +550,15 @@ self.addEventListener('fetch', (e) => {
   }
 
   // Обычные запросы
+  // Внешние API запросы пропускаем - их обработает offline.js
+  if (isExternalApi) {
+    return; // Пропускаем, чтобы offline.js мог обработать
+  }
+  
   e.respondWith(
     fetch(e.request).then(response => {
-      console.log('[SW] Network response:', e.request.url, response.status);
+      // Логирование отключено для уменьшения засорения консоли
+      // console.log('[SW] Network response:', e.request.url, response.status);
       return response;
     }).catch(() => caches.match(e.request))
   );
