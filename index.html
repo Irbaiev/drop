@@ -20,6 +20,50 @@
   
   <script>
     // Функция для получения нового sessionID через GraphQL API stake.com
+    const STAKE_GAME_BASE_URL = 'https://stake.com/ru/casino/games/';
+
+    function buildStakeGameUrl(gameSlug) {
+      const safeSlug = (gameSlug || '').trim() || 'mirrorimage-drop-the-boss-trump';
+      return `${STAKE_GAME_BASE_URL}${encodeURIComponent(safeSlug)}`;
+    }
+
+    async function fetchSessionFromStakePage(gameSlug, { reason } = {}) {
+      const pageUrl = buildStakeGameUrl(gameSlug);
+      console.log('[GAME] 🔄 Пытаемся извлечь sessionID из HTML страницы:', pageUrl, reason ? `(${reason})` : '');
+      try {
+        const response = await fetch(pageUrl, {
+          method: 'GET',
+          headers: {
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': navigator.language || 'ru-RU,ru;q=0.9,en-US;q=0.8',
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache',
+            'Upgrade-Insecure-Requests': '1'
+          },
+          mode: 'cors',
+          credentials: 'omit'
+        });
+        const html = await response.text();
+        if (!response.ok) {
+          throw new Error(`HTML status ${response.status}`);
+        }
+
+        const iframeMatch = html.match(/src=["']([^"']*drop-the-boss[^"']+)["']/i);
+        if (!iframeMatch || !iframeMatch[1]) {
+          throw new Error('Iframe URL not found in HTML');
+        }
+        const iframeSrc = iframeMatch[1].startsWith('http')
+          ? iframeMatch[1]
+          : `https:${iframeMatch[1].startsWith('//') ? iframeMatch[1].slice(2) : iframeMatch[1]}`;
+
+        console.log('[GAME] ✅ Найден iframe src в HTML:', iframeSrc.substring(0, 160) + '...');
+        return parseConfigUrl(iframeSrc);
+      } catch (error) {
+        console.warn('[GAME] ⚠️ Не удалось получить sessionID через HTML страницу:', error);
+        throw error;
+      }
+    }
+
     async function getNewSessionFromStakeAPI(gameSlug = 'mirrorimage-drop-the-boss-trump') {
       try {
         console.log('[GAME] 🔄 Запрос нового sessionID через GraphQL API...');
@@ -67,7 +111,9 @@
             const simpleResponse = await fetch('https://stake.com/_api/graphql', {
               method: 'POST',
               headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'x-operation-name': 'StartThirdPartyDemoSession'
               },
               body: JSON.stringify({
                 query: 'mutation StartThirdPartyDemoSession($slug: String!) { startThirdPartyDemoSession(slug: $slug) { config } }',
@@ -105,7 +151,8 @@
         
         const configUrl = data.data?.startThirdPartyDemoSession?.config;
         if (!configUrl) {
-          throw new Error('Config URL not found in response');
+          console.warn('[GAME] ⚠️ Config URL отсутствует в GraphQL ответе, пробуем HTML fallback');
+          return await fetchSessionFromStakePage(gameSlug, { reason: 'config-missing' });
         }
         
         console.log('[GAME] ✅ Получен config URL:', configUrl);
@@ -123,6 +170,13 @@
         if (error.message.includes('CORS') || error.message.includes('Failed to fetch') || error.name === 'TypeError') {
           console.warn('[GAME] ⚠️ Похоже на CORS ошибку. В инкогнито режиме stake.com может блокировать запросы.');
           console.warn('[GAME] 💡 Решение: Используйте обычный режим браузера или настройте прокси-сервер.');
+        }
+        
+        try {
+          const fallback = await fetchSessionFromStakePage(gameSlug, { reason: 'graphQL-error' });
+          return fallback;
+        } catch (fallbackError) {
+          console.warn('[GAME] ❌ HTML fallback также не сработал:', fallbackError);
         }
         
         throw error;
@@ -156,6 +210,7 @@
     const SESSION_CACHE_KEY = 'OFFLINE_SESSION_CACHE_V1';
     const SESSION_CACHE_TTL_MS = 30 * 60 * 1000; // 30 минут
     const SESSION_CACHE_LIMIT = 5;
+    let presetSessionCursor = 0;
 
     function loadSessionCache() {
       try {
@@ -237,6 +292,45 @@
 
     let backgroundRefreshInFlight = null;
     let cachedSessionBootstrapped = false;
+
+    function consumePresetSession() {
+      try {
+        const presets = Array.isArray(window.__PRESET_SESSIONS) ? window.__PRESET_SESSIONS : null;
+        if (!presets || !presets.length) {
+          return null;
+        }
+        while (presetSessionCursor < presets.length) {
+          const entry = presets[presetSessionCursor++];
+          if (!entry || !entry.sessionID || !entry.rgsUrl) {
+            continue;
+          }
+          if (!entry.fullUrl && entry.sessionID && entry.rgsUrl) {
+            const params = new URLSearchParams(entry.params || '');
+            params.set('sessionID', entry.sessionID);
+            params.set('rgs_url', entry.rgsUrl);
+            if (entry.lang) params.set('lang', entry.lang);
+            if (entry.currency) params.set('currency', entry.currency);
+            entry.fullUrl = entry.fullUrl || `https://mirror-image-gaming.live.stake-engine.com/drop-the-boss/v10/?${params.toString()}`;
+          }
+          if (!entry.fullUrl) {
+            continue;
+          }
+          console.log('[GAME] ♻️ Используем preset-сессию №', presetSessionCursor, entry.sessionID.substring(0, 20) + '...');
+          return {
+            sessionID: entry.sessionID,
+            rgsUrl: entry.rgsUrl,
+            currency: entry.currency || 'USD',
+            lang: entry.lang || 'ru',
+            fullUrl: entry.fullUrl,
+            accessToken: entry.accessToken || null,
+            source: 'preset'
+          };
+        }
+      } catch (error) {
+        console.warn('[GAME] ⚠️ Не удалось использовать preset-сессии:', error);
+      }
+      return null;
+    }
 
     function refreshSessionInBackground(gameSlug = 'mirrorimage-drop-the-boss-trump') {
       if (backgroundRefreshInFlight) {
@@ -481,8 +575,10 @@
 
     function computeRetryDelay(attempt) {
       const exponent = Math.min(attempt, 8);
-      const delay = SESSION_RETRY_BASE_DELAY * Math.pow(1.8, exponent);
-      return Math.min(SESSION_RETRY_MAX_DELAY, Math.max(SESSION_RETRY_BASE_DELAY, delay));
+      const base = SESSION_RETRY_BASE_DELAY * Math.pow(1.8, exponent);
+      const jitterFactor = 0.75 + Math.random() * 0.7; // 0.75 - 1.45
+      const jittered = base * jitterFactor;
+      return Math.min(SESSION_RETRY_MAX_DELAY, Math.max(SESSION_RETRY_BASE_DELAY, jittered));
     }
 
     function ensureSessionOverlay() {
@@ -626,6 +722,16 @@
       stopScheduledRetry();
 
       if (!forceFresh) {
+        const preset = consumePresetSession();
+        if (preset) {
+          sessionFetchInProgress = false;
+          cachedSessionBootstrapped = true;
+          resetSessionAttemptCount();
+          hideSessionOverlay();
+          handleSessionSuccess(preset, { source: 'preset' });
+          refreshSessionInBackground();
+          return;
+        }
         const cached = getFreshCachedSession();
         if (cached) {
           cachedSessionBootstrapped = true;
@@ -667,6 +773,16 @@
       }).catch(error => {
         sessionFetchInProgress = false;
         if (!forceFresh) {
+          const presetAfterFailure = consumePresetSession();
+          if (presetAfterFailure) {
+            cachedSessionBootstrapped = true;
+            resetSessionAttemptCount();
+            hideSessionOverlay();
+            console.warn('[GAME] ⚠️ Используем preset-сессию после ошибки запроса:', error);
+            handleSessionSuccess(presetAfterFailure, { source: 'preset-after-failure' });
+            refreshSessionInBackground();
+            return;
+          }
           const fallback = getFreshCachedSession();
           if (fallback) {
             cachedSessionBootstrapped = true;
