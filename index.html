@@ -32,9 +32,7 @@
             'Content-Type': 'application/json',
             'x-language': 'ru',
             'x-operation-name': 'StartThirdPartyDemoSession',
-            'x-operation-type': 'query',
-            'Origin': 'https://stake.com',
-            'Referer': 'https://stake.com/'
+            'x-operation-type': 'query'
           },
           body: JSON.stringify({
             query: 'mutation StartThirdPartyDemoSession($slug: String!) { startThirdPartyDemoSession(slug: $slug) { config } }',
@@ -329,20 +327,204 @@
     const iframe = document.getElementById('game-frame');
     
     const SESSION_RETRY_KEY = 'OFFLINE_SESSION_FETCH_ATTEMPTS';
-    function scheduleSessionRetry(reason) {
+    const SESSION_OVERLAY_ID = 'offline-session-wait-overlay';
+    const SESSION_RETRY_BASE_DELAY = 750;
+    const SESSION_RETRY_MAX_DELAY = 15000;
+
+    let sessionFetchAttempts = Number(sessionStorage.getItem(SESSION_RETRY_KEY)) || 0;
+    let sessionFetchInProgress = false;
+    let sessionRetryTimer = null;
+
+    let handshakePayload = null;
+    let handshakeRafId = null;
+    let handshakeTimeoutId = null;
+    let handshakeActive = false;
+    let handshakeTargetOrigin = '*';
+
+    let sessionOverlayRefs = null;
+
+    function storeSessionAttemptCount(value) {
+      sessionFetchAttempts = value;
       try {
-        const attempts = Number(sessionStorage.getItem(SESSION_RETRY_KEY)) || 0;
-        const nextAttempts = attempts + 1;
-        sessionStorage.setItem(SESSION_RETRY_KEY, String(nextAttempts));
-        const delay = Math.min(10000, 500 * nextAttempts);
-        console.warn('[GAME] 🔁 Перезагрузка страницы для повторного получения sessionID (попытка', nextAttempts, 'через', delay, 'мс). Причина:', reason?.message || reason);
-        setTimeout(() => {
-          window.location.reload();
-        }, delay);
-      } catch (e) {
-        console.error('[GAME] ❌ Не удалось запланировать перезагрузку, выполняем немедленный reload:', e);
-        window.location.reload();
+        sessionStorage.setItem(SESSION_RETRY_KEY, String(value));
+      } catch (_) {}
+    }
+
+    function resetSessionAttemptCount() {
+      storeSessionAttemptCount(0);
+    }
+
+    function incrementSessionAttemptCount() {
+      const next = sessionFetchAttempts + 1;
+      storeSessionAttemptCount(next);
+      return next;
+    }
+
+    function computeRetryDelay(attempt) {
+      const exponent = Math.min(attempt, 8);
+      const delay = SESSION_RETRY_BASE_DELAY * Math.pow(1.8, exponent);
+      return Math.min(SESSION_RETRY_MAX_DELAY, Math.max(SESSION_RETRY_BASE_DELAY, delay));
+    }
+
+    function ensureSessionOverlay() {
+      if (sessionOverlayRefs) return sessionOverlayRefs;
+
+      const overlay = document.createElement('div');
+      overlay.id = SESSION_OVERLAY_ID;
+      overlay.style.position = 'fixed';
+      overlay.style.inset = '0';
+      overlay.style.display = 'none';
+      overlay.style.background = '#000';
+      overlay.style.zIndex = '9999';
+
+      document.body.appendChild(overlay);
+
+      sessionOverlayRefs = { overlay };
+      return sessionOverlayRefs;
+    }
+
+    function showSessionOverlay() {
+      const { overlay } = ensureSessionOverlay();
+      overlay.style.display = 'flex';
+    }
+
+    function hideSessionOverlay() {
+      if (!sessionOverlayRefs) return;
+      sessionOverlayRefs.overlay.style.display = 'none';
+    }
+
+    function stopScheduledRetry() {
+      if (sessionRetryTimer) {
+        clearTimeout(sessionRetryTimer);
+        sessionRetryTimer = null;
       }
+    }
+
+    function stopSessionHandshake(reason) {
+      if (handshakeRafId !== null) {
+        cancelAnimationFrame(handshakeRafId);
+        handshakeRafId = null;
+      }
+      if (handshakeTimeoutId) {
+        clearTimeout(handshakeTimeoutId);
+        handshakeTimeoutId = null;
+      }
+      if (handshakeActive && reason) {
+        console.log('[GAME] 🤝 Handshake остановлен:', reason);
+      }
+      handshakeActive = false;
+    }
+
+    function beginSessionHandshake(targetOrigin = '*') {
+      if (!handshakePayload || !iframe.contentWindow) {
+        return;
+      }
+
+      stopSessionHandshake();
+      handshakeActive = true;
+      handshakeTargetOrigin = targetOrigin || '*';
+      const startedAt = performance.now();
+      const MAX_HANDSHAKE_DURATION = 8000;
+
+      const pump = () => {
+        if (!handshakeActive) {
+          return;
+        }
+        if (performance.now() - startedAt > MAX_HANDSHAKE_DURATION) {
+          console.warn('[GAME] ⏱️ Handshake timeout — ожидаем повторного сигнала от iframe');
+          stopSessionHandshake();
+          return;
+        }
+        try {
+          iframe.contentWindow.postMessage(handshakePayload, handshakeTargetOrigin);
+        } catch (err) {
+          console.warn('[GAME] ⚠️ Не удалось отправить данные сессии в iframe:', err);
+        }
+        handshakeRafId = requestAnimationFrame(pump);
+      };
+
+      handshakeTimeoutId = setTimeout(() => {
+        if (!handshakeActive) return;
+        console.warn('[GAME] ⏱️ Handshake не подтверждён, останавливаем повторную отправку');
+        stopSessionHandshake();
+      }, MAX_HANDSHAKE_DURATION + 2000);
+
+      pump();
+    }
+
+    function encodeSessionConfig(config) {
+      try {
+        const json = JSON.stringify(config);
+        const encoder = new TextEncoder();
+        const bytes = encoder.encode(json);
+        let binary = '';
+        bytes.forEach(byte => {
+          binary += String.fromCharCode(byte);
+        });
+        return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      } catch (error) {
+        console.warn('[GAME] ⚠️ Не удалось закодировать конфиг для hash:', error);
+        return '';
+      }
+    }
+
+    function handleSessionFailure(error) {
+      const attemptNumber = incrementSessionAttemptCount();
+      const delay = computeRetryDelay(attemptNumber);
+      const nextAttempt = attemptNumber + 1;
+      console.warn(`[GAME] ⚠️ Не удалось получить sessionID (попытка ${attemptNumber}). Следующий запрос через ${delay} мс`, error);
+      showSessionOverlay({
+        mode: 'error',
+        error,
+        attempt: attemptNumber,
+        nextAttempt,
+        nextDelayMs: delay
+      });
+      stopScheduledRetry();
+      sessionRetryTimer = setTimeout(() => {
+        sessionRetryTimer = null;
+        attemptSessionFetch();
+      }, delay);
+    }
+
+    function handleHandshakeMessage(event) {
+      if (!iframe.contentWindow || event.source !== iframe.contentWindow) {
+        return;
+      }
+      const type = event.data && event.data.type;
+      if (type === 'IFRAME_READY' || type === 'IFRAME_NEEDS_SESSION') {
+        console.log('[GAME] 🤝 Iframe запросил данные сессии:', type);
+        const origin = event.origin && event.origin !== 'null' ? event.origin : '*';
+        beginSessionHandshake(origin);
+      } else if (type === 'SESSION_APPLIED') {
+        console.log('[GAME] ✅ Iframe подтвердил получение sessionID');
+        stopSessionHandshake('acknowledged');
+        hideSessionOverlay();
+      }
+    }
+
+    window.addEventListener('message', handleHandshakeMessage, false);
+
+    function attemptSessionFetch(options = {}) {
+      if (sessionFetchInProgress) {
+        return;
+      }
+      stopScheduledRetry();
+      sessionFetchInProgress = true;
+      const currentAttempt = sessionFetchAttempts + 1;
+      showSessionOverlay({
+        mode: 'loading',
+        attempt: currentAttempt
+      });
+      getNewSessionFromStakeAPI().then(sessionData => {
+        sessionFetchInProgress = false;
+        resetSessionAttemptCount();
+        hideSessionOverlay();
+        handleSessionSuccess(sessionData);
+      }).catch(error => {
+        sessionFetchInProgress = false;
+        handleSessionFailure(error);
+      });
     }
 
     // Очищаем адресную строку родительской страницы от технических параметров
@@ -395,76 +577,81 @@
       console.warn('[GAME] ⚠️ Не удалось очистить localStorage:', e);
     }
     
-    // Пробуем получить новый sessionID через GraphQL API
-    getNewSessionFromStakeAPI().then(sessionData => {
+    // Пробуем получить новый sessionID через GraphQL API (попытки запускаются отдельной функцией)
+    function handleSessionSuccess(sessionData) {
       if (!sessionData || !sessionData.sessionID || !sessionData.rgsUrl) {
         console.error('[GAME] ❌ Получены некорректные данные sessionData:', sessionData);
-        scheduleSessionRetry(new Error('Invalid session data'));
+        handleSessionFailure(new Error('Invalid session data'));
         return;
       }
+
       console.log('[GAME] ✅ Успешно получен новый sessionID!');
+      stopSessionHandshake('refresh-before-reload');
       try {
         sessionStorage.removeItem(SESSION_RETRY_KEY);
       } catch (_) {}
-      
-      // Парсим полный URL из config
+
       const configUrl = new URL(sessionData.fullUrl);
       let pathname = configUrl.pathname;
-      
-      // Убираем завершающий слэш, если есть
+
       if (pathname.endsWith('/')) {
         pathname = pathname.slice(0, -1);
       }
-      
-      // Если путь заканчивается на версию (например, /v9), добавляем index.html
-      // Или используем существующий файл из структуры
+
       let gameFile = '';
       if (pathname.match(/\/v\d+$/)) {
-        // Путь заканчивается на версию, нужно найти файл index
-        // Пробуем использовать существующий файл из структуры (v10)
         const versionMatch = pathname.match(/\/(v\d+)$/);
         if (versionMatch) {
-          // Используем v10, так как это есть в структуре
           pathname = pathname.replace(/\/v\d+$/, '/v10');
           gameFile = 'index.__q_57679522.html';
         } else {
           gameFile = 'index.html';
         }
       } else {
-        // Извлекаем имя файла из пути
         const pathParts = pathname.split('/');
         gameFile = pathParts[pathParts.length - 1] || 'index.html';
         pathname = pathParts.slice(0, -1).join('/');
       }
-      
-      // Формируем относительный путь для iframe (используем прямые слэши для URL)
+
       const baseUrl = `mirror/${configUrl.hostname}${pathname}/${gameFile}`;
-      
-      // Используем параметры из config URL
       const params = new URLSearchParams(configUrl.search);
-      
-      // ВАЖНО: Добавляем уникальный access_token пользователя (перезаписываем старый)
+      const originalConfigUrlParams = new URLSearchParams(configUrl.search);
+
       params.set('access_token', userToken.accessToken);
-      
-      // Убеждаемся, что sessionID точно есть в параметрах (перезаписываем старый)
-      if (sessionData.sessionID) {
-        params.set('sessionID', sessionData.sessionID);
-      }
-      if (sessionData.rgsUrl) {
-        params.set('rgs_url', sessionData.rgsUrl);
-      }
-      
-      // Добавляем timestamp для принудительного обновления iframe (избегаем кеш)
+      params.set('sessionID', sessionData.sessionID);
+      params.set('rgs_url', sessionData.rgsUrl);
       params.set('_t', Date.now().toString());
-      
-      const finalUrl = `${baseUrl}?${params.toString()}`;
-      
+
+      if (!params.has('lang') && sessionData.lang) {
+        params.set('lang', sessionData.lang);
+      }
+      if (!params.has('currency') && sessionData.currency) {
+        params.set('currency', sessionData.currency);
+      }
+      if (originalConfigUrlParams.has('device')) params.set('device', originalConfigUrlParams.get('device'));
+      if (originalConfigUrlParams.has('social')) params.set('social', originalConfigUrlParams.get('social'));
+      if (originalConfigUrlParams.has('demo')) params.set('demo', originalConfigUrlParams.get('demo'));
+
+      const sessionContext = {
+        sessionID: sessionData.sessionID,
+        rgsUrl: sessionData.rgsUrl,
+        accessToken: userToken.accessToken,
+        currency: params.get('currency') || 'USD',
+        lang: params.get('lang') || 'ru',
+        device: params.get('device') || 'desktop',
+        social: params.get('social') || 'false',
+        demo: params.get('demo') || 'true'
+      };
+
+      const encodedConfig = encodeSessionConfig(sessionContext);
+      const hashPart = encodedConfig ? `#cfg=${encodedConfig}` : '';
+      const finalUrl = `${baseUrl}?${params.toString()}${hashPart}`;
+
       console.log('[GAME] 🔄 Обновляю iframe с новым sessionID...');
       console.log('[GAME] 📁 Путь к файлу:', baseUrl);
       console.log('[GAME] 🔑 sessionID в URL:', params.get('sessionID') ? params.get('sessionID').substring(0, 20) + '...' : 'ОТСУТСТВУЕТ!');
       console.log('[GAME] 🌐 Полный URL iframe:', finalUrl);
-      
-      // Обновляем адресную строку родителя в формате, как на оригинальном сайте
+
       try {
         const parentUrl = new URL(window.location.href);
         const allowedParams = ['sessionID', 'rgs_url', 'lang', 'currency', 'device', 'social', 'demo'];
@@ -491,19 +678,18 @@
         console.warn('[GAME] ⚠️ Не удалось обновить адрес родителя:', e);
       }
 
-      // Делаем sessionID доступным для iframe через window.top (без localStorage)
       window.__OFFLINE_SESSION_DATA = {
-        sessionID: sessionData.sessionID,
-        rgsUrl: sessionData.rgsUrl,
-        accessToken: userToken.accessToken,
-        currency: params.get('currency') || 'USD'
+        ...sessionContext,
+        hash: encodedConfig
       };
-      
-      // ВАЖНО: Сохраняем sessionID в localStorage ПЕРЕД загрузкой iframe
-      // чтобы bootstrap shim мог его использовать при инициализации
+
       try {
         localStorage.setItem('LAST_SESSION_ID', sessionData.sessionID);
         localStorage.setItem('LAST_RGS_URL', sessionData.rgsUrl);
+        localStorage.setItem('OFFLINE_REAL_API_SESSION_ID', sessionData.sessionID);
+        const normalizedBase = sessionData.rgsUrl.startsWith('http') ? sessionData.rgsUrl : `https://${sessionData.rgsUrl}`;
+        localStorage.setItem('OFFLINE_REAL_API_URL', normalizedBase.replace(/\/+$/, ''));
+        localStorage.setItem('OFFLINE_REAL_API_CURRENCY', sessionContext.currency);
         console.log('[GAME] 💾 Сохранено в localStorage ПЕРЕД загрузкой iframe:', {
           sessionID: sessionData.sessionID.substring(0, 20) + '...',
           rgsUrl: sessionData.rgsUrl
@@ -511,12 +697,31 @@
       } catch (e) {
         console.warn('[GAME] ⚠️ Не удалось сохранить в localStorage:', e);
       }
-      
-      // Принудительно обновляем iframe, даже если он уже загружен
-      // Сначала очищаем src, чтобы гарантировать перезагрузку
+
+      handshakePayload = {
+        type: 'SET_SESSION_ID',
+        sessionID: sessionData.sessionID,
+        rgsUrl: sessionData.rgsUrl,
+        accessToken: userToken.accessToken,
+        force: true,
+        lang: sessionContext.lang,
+        currency: sessionContext.currency,
+        device: sessionContext.device,
+        social: sessionContext.social,
+        demo: sessionContext.demo,
+        hash: encodedConfig || null,
+        timestamp: Date.now()
+      };
+
+      stopSessionHandshake('before-reassign-src');
+
+      const kickstartHandshake = () => {
+        if (!handshakePayload) return;
+        beginSessionHandshake('*');
+      };
+
       if (iframe.src) {
         iframe.src = '';
-        // Небольшая задержка для гарантии очистки
         setTimeout(() => {
           iframe.src = finalUrl;
           console.log('[GAME] ✅ Iframe src обновлен с новым sessionID');
@@ -525,80 +730,17 @@
         iframe.src = finalUrl;
         console.log('[GAME] ✅ Iframe src установлен с новым sessionID');
       }
-      
-      // Передаем sessionID в iframe через postMessage после его загрузки
-      // Отправляем несколько раз для надежности (iframe может загружаться асинхронно)
-      let postMessageAttempts = 0;
-      const maxAttempts = 10; // Увеличиваем количество попыток
-      
-      function sendSessionIDToIframe() {
-        try {
-          if (iframe.contentWindow) {
-            const message = {
-              type: 'SET_SESSION_ID',
-              sessionID: sessionData.sessionID,
-              rgsUrl: sessionData.rgsUrl,
-              accessToken: userToken.accessToken, // Также передаем новый access_token
-              force: true // Флаг для принудительного обновления
-            };
-            
-            iframe.contentWindow.postMessage(message, '*');
-            console.log('[GAME] 📤 Отправлен sessionID и access_token в iframe через postMessage (попытка ' + (postMessageAttempts + 1) + '/' + maxAttempts + '):', {
-              sessionID: sessionData.sessionID.substring(0, 20) + '...',
-              playerId: userToken.playerId.substring(0, 30) + '...',
-              accessToken: userToken.accessToken.substring(0, 50) + '...',
-              targetOrigin: '*'
-            });
-            postMessageAttempts++;
-            
-            // Повторяем отправку несколько раз с задержкой
-            if (postMessageAttempts < maxAttempts) {
-              setTimeout(sendSessionIDToIframe, 200); // Увеличиваем задержку до 200ms
-            } else {
-              console.log('[GAME] ✅ Завершена отправка postMessage (всего попыток:', maxAttempts + ')');
-            }
-          } else {
-            console.warn('[GAME] ⚠️ iframe.contentWindow недоступен, попытка ' + (postMessageAttempts + 1));
-            postMessageAttempts++;
-            if (postMessageAttempts < maxAttempts) {
-              setTimeout(sendSessionIDToIframe, 200);
-            }
-          }
-        } catch (e) {
-          console.error('[GAME] ❌ Ошибка при отправке postMessage (попытка ' + (postMessageAttempts + 1) + '):', e);
-          postMessageAttempts++;
-          if (postMessageAttempts < maxAttempts) {
-            setTimeout(sendSessionIDToIframe, 200);
-          }
-        }
-      }
-      
-      // Отправляем postMessage при загрузке iframe
+
       iframe.addEventListener('load', function onIframeLoad() {
         iframe.removeEventListener('load', onIframeLoad);
-        console.log('[GAME] 📥 Iframe загружен, начинаем отправку postMessage...');
-        // Увеличиваем задержку, чтобы iframe успел полностью инициализироваться и bootstrap shim выполнился
-        setTimeout(sendSessionIDToIframe, 500);
+        console.log('[GAME] 📥 Iframe загружен, запускаем handshake...');
+        setTimeout(kickstartHandshake, 200);
       }, { once: true });
-      
-      // Также отправляем сразу, если iframe уже загружен
-      if (iframe.contentWindow) {
-        console.log('[GAME] 📥 Iframe уже загружен, начинаем отправку postMessage...');
-        setTimeout(sendSessionIDToIframe, 500);
-      }
-      
-      // Дополнительная проверка: отправляем postMessage после небольшой задержки
-      // на случай, если iframe загрузился, но bootstrap shim еще не выполнился
-      setTimeout(() => {
-        if (iframe.contentWindow) {
-          console.log('[GAME] 📥 Дополнительная отправка postMessage (проверка готовности iframe)...');
-          sendSessionIDToIframe();
-        }
-      }, 1000);
-    }).catch(err => {
-      console.warn('[GAME] ⚠️ Не удалось получить sessionID через API. Инициируем повторную попытку:', err);
-      scheduleSessionRetry(err);
-    });
+
+      setTimeout(kickstartHandshake, 600);
+    }
+
+    attemptSessionFetch();
     
     function resizeIframe() {
       iframe.style.width = window.innerWidth + 'px';

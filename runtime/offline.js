@@ -390,9 +390,55 @@
         const savedSid = localStorage.getItem('OFFLINE_REAL_API_SESSION_ID');
         if (!forceNewSession && savedSid && savedSid.trim()) {
           console.log('[OFFLINE] ▶ Using saved sessionID from localStorage:', savedSid.trim(), '- Skipping /session/start');
-          return;
+        return;
+      }
+    } catch (_) {}
+
+    // Дополнительная попытка: используем конфиг, заранее переданный bootstrap-скриптом внутри iframe
+    try {
+      if (window.__SESSION_CFG__ && window.__SESSION_CFG__.sessionID) {
+        const cfg = window.__SESSION_CFG__;
+        const newParams = new URLSearchParams(window.location.search);
+        newParams.set('sessionID', cfg.sessionID);
+        if (cfg.rgsUrl) {
+          newParams.set('rgs_url', cfg.rgsUrl);
         }
-      } catch (_) {}
+        if (cfg.currency) {
+          newParams.set('currency', cfg.currency);
+          try { localStorage.setItem('OFFLINE_REAL_API_CURRENCY', cfg.currency); } catch (_) {}
+        }
+        if (cfg.lang) {
+          newParams.set('lang', cfg.lang);
+        }
+        if (cfg.device) {
+          newParams.set('device', cfg.device);
+        }
+        if (cfg.social) {
+          newParams.set('social', cfg.social);
+        }
+        if (cfg.demo) {
+          newParams.set('demo', cfg.demo);
+        }
+        try { history.replaceState(null, '', window.location.pathname + '?' + newParams.toString() + window.location.hash); } catch (_) {}
+        try {
+          localStorage.setItem('OFFLINE_REAL_API_SESSION_ID', cfg.sessionID);
+          localStorage.setItem('LAST_SESSION_ID', cfg.sessionID);
+          if (cfg.rgsUrl) {
+            localStorage.setItem('LAST_RGS_URL', cfg.rgsUrl);
+            const normalized = cfg.rgsUrl.startsWith('http') ? cfg.rgsUrl : `https://${cfg.rgsUrl}`;
+            localStorage.setItem('OFFLINE_REAL_API_URL', normalized.replace(/\/+$/, ''));
+          }
+          if (cfg.accessToken) {
+            localStorage.setItem('OFFLINE_USER_ACCESS_TOKEN', cfg.accessToken);
+            localStorage.setItem('OFFLINE_REAL_API_ACCESS_TOKEN', cfg.accessToken);
+          }
+          localStorage.setItem('OFFLINE_USE_REAL_API', '1');
+          localStorage.setItem('OFFLINE_ENABLE_SESSION_START_FALLBACK', '0');
+        } catch (_) {}
+        console.log('[OFFLINE] ✅ Adopted sessionID from window.__SESSION_CFG__');
+        return;
+      }
+    } catch (_) {}
 
       // Получаем access_token из localStorage (приоритет) или из URL
       // ВАЖНО: Токен пользователя НЕ должен перезаписываться из URL - он постоянный для устройства

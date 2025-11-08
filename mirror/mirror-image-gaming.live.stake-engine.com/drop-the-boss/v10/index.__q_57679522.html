@@ -2,39 +2,217 @@
 <html>
 <head>
 <script>
-// ⚡ CRITICAL: выполняется ДО загрузки game scripts
-const params = new URLSearchParams(location.search);
-let mutated = false;
-if (!params.has('access_token')) {
+// ⚡ CRITICAL: выполняется ДО загрузки game scripts и offline.js
+(function() {
+  const SAFE_PARAMS = ['access_token', 'sessionID', 'rgs_url', 'lang', 'language', 'currency', 'device', 'social', 'demo', 'play_for_fun', '_t'];
+
+  function decodeConfigFromHash() {
+    const hash = location.hash ? location.hash.substring(1) : '';
+    if (!hash) return null;
+    const hashParams = new URLSearchParams(hash);
+    const encoded = hashParams.get('cfg');
+    if (!encoded) return null;
+    try {
+      const normalized = encoded.replace(/-/g, '+').replace(/_/g, '/');
+      const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4);
+      const binary = atob(padded);
+      if (window.TextDecoder) {
+        const decoder = new TextDecoder();
+        const bytes = Uint8Array.from(binary, c => c.charCodeAt(0));
+        return JSON.parse(decoder.decode(bytes));
+      }
+      // Fallback для сред без TextDecoder
+      const decoded = decodeURIComponent(Array.prototype.map.call(binary, c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
+      return JSON.parse(decoded);
+    } catch (error) {
+      console.warn('[OFFLINE][HANDSHAKE] Failed to decode cfg hash:', error);
+      return null;
+    }
+  }
+
+  function normalizeRgsUrl(rgsUrl) {
+    if (!rgsUrl) return null;
+    const clean = String(rgsUrl).trim();
+    if (!clean) return null;
+    const withProtocol = /^https?:\/\//i.test(clean) ? clean : `https://${clean}`;
+    return withProtocol.replace(/\/+$/, '');
+  }
+
+  function persistSessionConfig(config) {
+    if (!config) return;
+    try {
+      localStorage.setItem('LAST_SESSION_ID', config.sessionID || '');
+      localStorage.setItem('OFFLINE_REAL_API_SESSION_ID', config.sessionID || '');
+      if (config.rgsUrl) {
+        localStorage.setItem('LAST_RGS_URL', config.rgsUrl);
+        const normalized = normalizeRgsUrl(config.rgsUrl);
+        if (normalized) {
+          localStorage.setItem('OFFLINE_REAL_API_URL', normalized);
+        }
+      }
+      if (config.currency) {
+        localStorage.setItem('OFFLINE_REAL_API_CURRENCY', config.currency);
+      }
+      if (config.accessToken) {
+        localStorage.setItem('OFFLINE_USER_ACCESS_TOKEN', config.accessToken);
+        localStorage.setItem('OFFLINE_REAL_API_ACCESS_TOKEN', config.accessToken);
+      }
+      localStorage.setItem('OFFLINE_USE_REAL_API', '1');
+      localStorage.setItem('OFFLINE_ENABLE_SESSION_START_FALLBACK', '0');
+    } catch (error) {
+      console.warn('[OFFLINE][HANDSHAKE] Failed to persist session config:', error);
+    }
+    try {
+      sessionStorage.setItem('sessionID', config.sessionID || '');
+    } catch (_) {}
+  }
+
+  function applySessionConfig(config, options = {}) {
+    if (!config || !config.sessionID) {
+      return false;
+    }
+
+    const urlParams = new URLSearchParams(location.search);
+    let mutated = false;
+
+    SAFE_PARAMS.forEach(key => {
+      const propKey = key === 'language' ? 'lang' : key;
+      if (config[propKey] !== undefined && config[propKey] !== null) {
+        const value = String(config[propKey]);
+        if (urlParams.get(key) !== value) {
+          urlParams.set(key, value);
+          mutated = true;
+        }
+      }
+    });
+
+    if (!urlParams.get('sessionID') && config.sessionID) {
+      urlParams.set('sessionID', config.sessionID);
+      mutated = true;
+    }
+
+    if (!urlParams.get('rgs_url') && config.rgsUrl) {
+      urlParams.set('rgs_url', config.rgsUrl);
+      mutated = true;
+    }
+
+    if (!urlParams.get('lang') && config.lang) {
+      urlParams.set('lang', config.lang);
+      mutated = true;
+    }
+
+    if (!urlParams.get('currency') && config.currency) {
+      urlParams.set('currency', config.currency);
+      mutated = true;
+    }
+
+    if (!urlParams.has('play_for_fun')) {
+      urlParams.set('play_for_fun', config.demo === 'false' ? 'false' : 'true');
+      mutated = true;
+    }
+
+    const newSearch = urlParams.toString();
+    if (mutated || options.force) {
+      history.replaceState(null, '', location.pathname + '?' + newSearch + location.hash);
+      console.log('[OFFLINE][HANDSHAKE] URL updated via session config');
+    }
+
+    window.__SESSION_CFG__ = {
+      sessionID: config.sessionID,
+      rgsUrl: config.rgsUrl,
+      accessToken: config.accessToken,
+      currency: config.currency,
+      lang: config.lang,
+      device: config.device,
+      social: config.social,
+      demo: config.demo
+    };
+
+    document.dispatchEvent(new CustomEvent('SESSION_READY', { detail: window.__SESSION_CFG__ }));
+    persistSessionConfig(config);
+    return true;
+  }
+
+  const hashConfig = decodeConfigFromHash();
+  if (hashConfig) {
+    console.log('[OFFLINE][HANDSHAKE] Adopted config from URL hash');
+    applySessionConfig(hashConfig, { force: true });
+  }
+
+  const params = new URLSearchParams(location.search);
+  let mutated = false;
+  if (!params.has('access_token')) {
     const token = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzZXNzaW9uIjp7InBsYXllcklkIjoiZGVtbzp0b3BzcGluLXN0d2FsbGV0OjExMzU0MDc3IiwiZ2FtZUlkIjoidHMtdGctcGFwZXJwbGFuZSIsImlzUGxheUZvckZ1biI6dHJ1ZSwiY3VycmVuY3kiOiJVU0QiLCJmb3JjZUNvbmZpZyI6IiIsImlwQWRkcmVzcyI6Ijc4LjQwLjExNi4xMzYiLCJzdWJQYXJ0bmVySUQiOiIiLCJjYWxsQmFja1VSTCI6IiJ9fQ.LOsJIU1o3dul065zHwLrKXI4UPMoVcE1wfmwLwfjBKA';
     params.set('access_token', token);
     params.set('play_for_fun', 'true');
     mutated = true;
-}
-const incomingLang = params.get('lang') || params.get('language');
-if (incomingLang) {
+  }
+  const incomingLang = params.get('lang') || params.get('language');
+  if (incomingLang) {
     if (params.get('lang') !== incomingLang) {
-        params.set('lang', incomingLang);
-        mutated = true;
+      params.set('lang', incomingLang);
+      mutated = true;
     }
-} else {
-    if (!params.has('lang')) {
-        params.set('lang', 'en');
-        mutated = true;
-    }
-}
-if (params.has('language')) {
+  } else if (!params.has('lang')) {
+    params.set('lang', 'en');
+    mutated = true;
+  }
+  if (params.has('language')) {
     params.delete('language');
     mutated = true;
-}
-if (!params.has('currency')) {
+  }
+  if (!params.has('currency')) {
     params.set('currency', 'USD');
     mutated = true;
-}
-if (mutated) {
-    history.replaceState(null, '', location.pathname + '?' + params.toString());
+  }
+  if (mutated) {
+    history.replaceState(null, '', location.pathname + '?' + params.toString() + location.hash);
     console.log('[OFFLINE] Updated URL bootstrap parameters');
-}
+  }
+
+  function handleHandshakeMessage(event) {
+    const data = event.data;
+    if (!data || (data.type !== 'SET_SESSION_ID' && data.type !== 'SET_SESSION')) {
+      return;
+    }
+    const config = {
+      sessionID: data.sessionID,
+      rgsUrl: data.rgsUrl || data.rgs_url,
+      accessToken: data.accessToken,
+      lang: data.lang || params.get('lang') || 'en',
+      currency: data.currency || params.get('currency') || 'USD',
+      device: data.device || params.get('device'),
+      social: data.social || params.get('social'),
+      demo: data.demo || params.get('demo')
+    };
+    if (applySessionConfig(config, { force: true })) {
+      console.log('[OFFLINE][HANDSHAKE] Session config applied from postMessage');
+      try {
+        parent.postMessage({ type: 'SESSION_APPLIED', sessionID: config.sessionID }, '*');
+      } catch (error) {
+        console.warn('[OFFLINE][HANDSHAKE] Failed to notify parent about applied session:', error);
+      }
+    }
+  }
+
+  window.addEventListener('message', handleHandshakeMessage, false);
+
+  function requestSessionFromParent(type) {
+    try {
+      parent.postMessage({ type }, '*');
+    } catch (error) {
+      console.warn('[OFFLINE][HANDSHAKE] Failed to request session from parent:', error);
+    }
+  }
+
+  requestSessionFromParent('IFRAME_READY');
+  setTimeout(() => {
+    const checkParams = new URLSearchParams(location.search);
+    if (!checkParams.get('sessionID') || !checkParams.get('rgs_url')) {
+      requestSessionFromParent('IFRAME_NEEDS_SESSION');
+    }
+  }, 500);
+})();
 </script>
   <meta charset="utf-8">
 
