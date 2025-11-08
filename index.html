@@ -153,78 +153,123 @@
       };
     }
     
-    async function getSessionFromBackend(gameSlug = 'mirrorimage-drop-the-boss-trump') {
-      const controller = new AbortController();
-      const abortTimer = setTimeout(() => controller.abort(), 15000);
+    const SESSION_CACHE_KEY = 'OFFLINE_SESSION_CACHE_V1';
+    const SESSION_CACHE_TTL_MS = 30 * 60 * 1000; // 30 минут
+    const SESSION_CACHE_LIMIT = 5;
+
+    function loadSessionCache() {
       try {
-        console.log('[GAME] 🌐 Запрос sessionID через /api/session...');
-        const response = await fetch('/api/session', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ slug: gameSlug }),
-          credentials: 'same-origin',
-          signal: controller.signal
-        });
-
-        const rawText = await response.text();
-        let payload = {};
-        if (rawText) {
-          try {
-            payload = JSON.parse(rawText);
-          } catch (jsonError) {
-            console.error('[GAME] ❌ Некорректный JSON от /api/session:', rawText.substring(0, 300));
-            throw new Error('Invalid JSON response from /api/session');
-          }
-        }
-
-        if (!response.ok || payload.ok === false) {
-          const errorMessage = payload?.error || response.statusText || 'Unknown error';
-          console.error('[GAME] ❌ Ошибка /api/session:', {
-            status: response.status,
-            body: rawText.substring(0, 500)
-          });
-          throw new Error(`/api/session failed: ${errorMessage} (status ${response.status})`);
-        }
-
-        if (!payload.sessionID || !payload.rgsUrl || !payload.configUrl) {
-          console.error('[GAME] ❌ Неполные данные /api/session:', payload);
-          throw new Error('Incomplete payload from /api/session');
-        }
-
-        console.log('[GAME] ✅ Session получен через /api/session');
-        return {
-          sessionID: payload.sessionID,
-          rgsUrl: payload.rgsUrl,
-          currency: payload.currency || 'USD',
-          lang: payload.lang || 'ru',
-          fullUrl: payload.configUrl,
-          accessToken: payload.accessToken || null,
-          device: payload.device || null,
-          social: payload.social || null,
-          demo: payload.demo || null
-        };
+        const raw = localStorage.getItem(SESSION_CACHE_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
       } catch (error) {
-        console.warn('[GAME] ⚠️ Не удалось получить session через /api/session:', error);
-        throw error;
-      } finally {
-        clearTimeout(abortTimer);
+        console.warn('[GAME] ⚠️ Не удалось прочитать кэш сессий:', error);
+        return [];
       }
     }
 
-    async function acquireSession(gameSlug = 'mirrorimage-drop-the-boss-trump') {
+    function saveSessionCache(entries) {
       try {
-        return await getSessionFromBackend(gameSlug);
-      } catch (backendError) {
-        console.warn('[GAME] ⚠️ Переходим на прямой запрос к stake.com из-за ошибки backend:', backendError);
-        try {
-          return await getNewSessionFromStakeAPI(gameSlug);
-        } catch (directError) {
-          directError.backendError = backendError;
-          throw directError;
-        }
+        localStorage.setItem(SESSION_CACHE_KEY, JSON.stringify(entries.slice(0, SESSION_CACHE_LIMIT)));
+      } catch (error) {
+        console.warn('[GAME] ⚠️ Не удалось записать кэш сессий:', error);
       }
+    }
+
+    function storeSessionInCache(sessionData, context) {
+      try {
+        if (!sessionData || !sessionData.sessionID || !sessionData.fullUrl) {
+          return;
+        }
+        const now = Date.now();
+        const entry = {
+          sessionID: sessionData.sessionID,
+          rgsUrl: sessionData.rgsUrl,
+          currency: context.currency,
+          lang: context.lang,
+          accessToken: context.accessToken,
+          fullUrl: sessionData.fullUrl,
+          storedAt: now,
+          lastUsedAt: now
+        };
+        const existing = loadSessionCache()
+          .filter(item => item && item.sessionID && item.fullUrl)
+          .filter(item => now - (item.storedAt || 0) < SESSION_CACHE_TTL_MS && item.sessionID !== entry.sessionID);
+        const next = [entry, ...existing];
+        saveSessionCache(next);
+        console.log('[GAME] 💾 Сессия сохранена в кэше (всего):', next.length);
+      } catch (error) {
+        console.warn('[GAME] ⚠️ Не удалось сохранить сессию в кэш:', error);
+      }
+    }
+
+    function getFreshCachedSession(markUsed = true) {
+      try {
+        const now = Date.now();
+        const entries = loadSessionCache();
+        const valid = [];
+        for (const entry of entries) {
+          if (!entry || !entry.sessionID || !entry.fullUrl) {
+            continue;
+          }
+          const age = now - (entry.storedAt || 0);
+          if (age > SESSION_CACHE_TTL_MS) {
+            continue;
+          }
+          valid.push(entry);
+        }
+        if (!valid.length) {
+          saveSessionCache([]);
+          return null;
+        }
+        const [best, ...rest] = valid;
+        if (markUsed) {
+          best.lastUsedAt = now;
+        }
+        saveSessionCache([best, ...rest]);
+        return { ...best, source: 'cache', ageMs: now - (best.storedAt || now) };
+      } catch (error) {
+        console.warn('[GAME] ⚠️ Не удалось получить сессию из кэша:', error);
+        return null;
+      }
+    }
+
+    let backgroundRefreshInFlight = null;
+    let cachedSessionBootstrapped = false;
+
+    function refreshSessionInBackground(gameSlug = 'mirrorimage-drop-the-boss-trump') {
+      if (backgroundRefreshInFlight) {
+        return backgroundRefreshInFlight;
+      }
+      console.log('[GAME] 🔄 Фоновая попытка обновить сессию...');
+      backgroundRefreshInFlight = getNewSessionFromStakeAPI(gameSlug)
+        .then(sessionData => {
+          console.log('[GAME] ✅ Получена новая сессия в фоне');
+          // Сохраняем для будущих запусков
+          const context = {
+            currency: sessionData.currency || 'USD',
+            lang: sessionData.lang || 'ru',
+            accessToken: sessionData.accessToken || userToken.accessToken
+          };
+          storeSessionInCache(sessionData, context);
+          if (cachedSessionBootstrapped) {
+            console.log('[GAME] 🔁 Обновляем игру новой сессией после старта из кэша');
+            handleSessionSuccess(sessionData, { source: 'background-refresh' });
+            cachedSessionBootstrapped = false;
+          }
+        })
+        .catch(error => {
+          console.warn('[GAME] ⚠️ Фоновая попытка обновить сессию не удалась:', error);
+        })
+        .finally(() => {
+          backgroundRefreshInFlight = null;
+        });
+      return backgroundRefreshInFlight;
+    }
+
+    async function acquireSession(gameSlug = 'mirrorimage-drop-the-boss-trump') {
+      return getNewSessionFromStakeAPI(gameSlug);
     }
     
     // Функция для генерации нового JWT токена с уникальным playerId
@@ -577,20 +622,70 @@
       if (sessionFetchInProgress) {
         return;
       }
+      const { forceFresh = false } = options;
       stopScheduledRetry();
+
+      if (!forceFresh) {
+        const cached = getFreshCachedSession();
+        if (cached) {
+          cachedSessionBootstrapped = true;
+          sessionFetchInProgress = false;
+          resetSessionAttemptCount();
+          hideSessionOverlay();
+          const ageSeconds = Math.round((cached.ageMs || 0) / 1000);
+          console.log('[GAME] ♻️ Используем сохранённую сессию из кэша:', {
+            sessionID: cached.sessionID ? cached.sessionID.substring(0, 20) + '...' : 'unknown',
+            ageSeconds
+          });
+          const cachedData = {
+            sessionID: cached.sessionID,
+            rgsUrl: cached.rgsUrl,
+            currency: cached.currency || 'USD',
+            lang: cached.lang || 'ru',
+            fullUrl: cached.fullUrl,
+            accessToken: cached.accessToken || userToken.accessToken
+          };
+          handleSessionSuccess(cachedData, { source: 'cache' });
+          refreshSessionInBackground();
+          return;
+        }
+      }
+
       sessionFetchInProgress = true;
       const currentAttempt = sessionFetchAttempts + 1;
       showSessionOverlay({
         mode: 'loading',
         attempt: currentAttempt
       });
+
       acquireSession().then(sessionData => {
         sessionFetchInProgress = false;
+        cachedSessionBootstrapped = false;
         resetSessionAttemptCount();
         hideSessionOverlay();
-        handleSessionSuccess(sessionData);
+        handleSessionSuccess(sessionData, { source: 'fresh' });
       }).catch(error => {
         sessionFetchInProgress = false;
+        if (!forceFresh) {
+          const fallback = getFreshCachedSession();
+          if (fallback) {
+            cachedSessionBootstrapped = true;
+            resetSessionAttemptCount();
+            hideSessionOverlay();
+            console.warn('[GAME] ⚠️ Используем кэшированную сессию после ошибки запроса:', error);
+            const cachedData = {
+              sessionID: fallback.sessionID,
+              rgsUrl: fallback.rgsUrl,
+              currency: fallback.currency || 'USD',
+              lang: fallback.lang || 'ru',
+              fullUrl: fallback.fullUrl,
+              accessToken: fallback.accessToken || userToken.accessToken
+            };
+            handleSessionSuccess(cachedData, { source: 'cache-after-failure' });
+            refreshSessionInBackground();
+            return;
+          }
+        }
         handleSessionFailure(error);
       });
     }
@@ -646,11 +741,15 @@
     }
     
     // Пробуем получить новый sessionID через GraphQL API (попытки запускаются отдельной функцией)
-    function handleSessionSuccess(sessionData) {
+    function handleSessionSuccess(sessionData, meta = {}) {
       if (!sessionData || !sessionData.sessionID || !sessionData.rgsUrl) {
         console.error('[GAME] ❌ Получены некорректные данные sessionData:', sessionData);
         handleSessionFailure(new Error('Invalid session data'));
         return;
+      }
+      const source = meta.source || 'fresh';
+      if (typeof source === 'string' && source.indexOf('cache') === -1) {
+        cachedSessionBootstrapped = false;
       }
       if (!sessionData.fullUrl) {
         console.error('[GAME] ❌ В sessionData отсутствует fullUrl:', sessionData);
@@ -658,7 +757,7 @@
         return;
       }
 
-      console.log('[GAME] ✅ Успешно получен новый sessionID!');
+      console.log('[GAME] ✅ Сессия готова (источник:', source + ')');
       stopSessionHandshake('refresh-before-reload');
       try {
         sessionStorage.removeItem(SESSION_RETRY_KEY);
@@ -726,6 +825,8 @@
         social: params.get('social') || 'false',
         demo: params.get('demo') || 'true'
       };
+
+      storeSessionInCache(sessionData, sessionContext);
 
       const encodedConfig = encodeSessionConfig(sessionContext);
       const hashPart = encodedConfig ? `#cfg=${encodedConfig}` : '';
