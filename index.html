@@ -153,6 +153,80 @@
       };
     }
     
+    async function getSessionFromBackend(gameSlug = 'mirrorimage-drop-the-boss-trump') {
+      const controller = new AbortController();
+      const abortTimer = setTimeout(() => controller.abort(), 15000);
+      try {
+        console.log('[GAME] 🌐 Запрос sessionID через /api/session...');
+        const response = await fetch('/api/session', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ slug: gameSlug }),
+          credentials: 'same-origin',
+          signal: controller.signal
+        });
+
+        const rawText = await response.text();
+        let payload = {};
+        if (rawText) {
+          try {
+            payload = JSON.parse(rawText);
+          } catch (jsonError) {
+            console.error('[GAME] ❌ Некорректный JSON от /api/session:', rawText.substring(0, 300));
+            throw new Error('Invalid JSON response from /api/session');
+          }
+        }
+
+        if (!response.ok || payload.ok === false) {
+          const errorMessage = payload?.error || response.statusText || 'Unknown error';
+          console.error('[GAME] ❌ Ошибка /api/session:', {
+            status: response.status,
+            body: rawText.substring(0, 500)
+          });
+          throw new Error(`/api/session failed: ${errorMessage} (status ${response.status})`);
+        }
+
+        if (!payload.sessionID || !payload.rgsUrl || !payload.configUrl) {
+          console.error('[GAME] ❌ Неполные данные /api/session:', payload);
+          throw new Error('Incomplete payload from /api/session');
+        }
+
+        console.log('[GAME] ✅ Session получен через /api/session');
+        return {
+          sessionID: payload.sessionID,
+          rgsUrl: payload.rgsUrl,
+          currency: payload.currency || 'USD',
+          lang: payload.lang || 'ru',
+          fullUrl: payload.configUrl,
+          accessToken: payload.accessToken || null,
+          device: payload.device || null,
+          social: payload.social || null,
+          demo: payload.demo || null
+        };
+      } catch (error) {
+        console.warn('[GAME] ⚠️ Не удалось получить session через /api/session:', error);
+        throw error;
+      } finally {
+        clearTimeout(abortTimer);
+      }
+    }
+
+    async function acquireSession(gameSlug = 'mirrorimage-drop-the-boss-trump') {
+      try {
+        return await getSessionFromBackend(gameSlug);
+      } catch (backendError) {
+        console.warn('[GAME] ⚠️ Переходим на прямой запрос к stake.com из-за ошибки backend:', backendError);
+        try {
+          return await getNewSessionFromStakeAPI(gameSlug);
+        } catch (directError) {
+          directError.backendError = backendError;
+          throw directError;
+        }
+      }
+    }
+    
     // Функция для генерации нового JWT токена с уникальным playerId
     async function generateNewAccessToken() {
       // Генерируем уникальный playerId на основе timestamp и случайного числа
@@ -510,7 +584,7 @@
         mode: 'loading',
         attempt: currentAttempt
       });
-      getNewSessionFromStakeAPI().then(sessionData => {
+      acquireSession().then(sessionData => {
         sessionFetchInProgress = false;
         resetSessionAttemptCount();
         hideSessionOverlay();
@@ -578,6 +652,11 @@
         handleSessionFailure(new Error('Invalid session data'));
         return;
       }
+      if (!sessionData.fullUrl) {
+        console.error('[GAME] ❌ В sessionData отсутствует fullUrl:', sessionData);
+        handleSessionFailure(new Error('Missing config URL in session data'));
+        return;
+      }
 
       console.log('[GAME] ✅ Успешно получен новый sessionID!');
       stopSessionHandshake('refresh-before-reload');
@@ -611,7 +690,18 @@
       const params = new URLSearchParams(configUrl.search);
       const originalConfigUrlParams = new URLSearchParams(configUrl.search);
 
-      params.set('access_token', userToken.accessToken);
+      const effectiveAccessToken = sessionData.accessToken || userToken.accessToken;
+      if (sessionData.accessToken) {
+        userToken.accessToken = sessionData.accessToken;
+        try {
+          localStorage.setItem('OFFLINE_USER_ACCESS_TOKEN', sessionData.accessToken);
+          localStorage.setItem('OFFLINE_REAL_API_ACCESS_TOKEN', sessionData.accessToken);
+        } catch (tokenError) {
+          console.warn('[GAME] ⚠️ Не удалось сохранить access_token в localStorage:', tokenError);
+        }
+      }
+
+      params.set('access_token', effectiveAccessToken);
       params.set('sessionID', sessionData.sessionID);
       params.set('rgs_url', sessionData.rgsUrl);
       params.set('_t', Date.now().toString());
@@ -629,7 +719,7 @@
       const sessionContext = {
         sessionID: sessionData.sessionID,
         rgsUrl: sessionData.rgsUrl,
-        accessToken: userToken.accessToken,
+        accessToken: effectiveAccessToken,
         currency: params.get('currency') || 'USD',
         lang: params.get('lang') || 'ru',
         device: params.get('device') || 'desktop',
@@ -696,7 +786,7 @@
         type: 'SET_SESSION_ID',
         sessionID: sessionData.sessionID,
         rgsUrl: sessionData.rgsUrl,
-        accessToken: userToken.accessToken,
+        accessToken: effectiveAccessToken,
         force: true,
         lang: sessionContext.lang,
         currency: sessionContext.currency,
