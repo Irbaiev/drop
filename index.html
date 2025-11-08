@@ -383,15 +383,9 @@
       return sessionOverlayRefs;
     }
 
-    function showSessionOverlay() {
-      const { overlay } = ensureSessionOverlay();
-      overlay.style.display = 'flex';
-    }
+    function showSessionOverlay() {}
 
-    function hideSessionOverlay() {
-      if (!sessionOverlayRefs) return;
-      sessionOverlayRefs.overlay.style.display = 'none';
-    }
+    function hideSessionOverlay() {}
 
     function stopScheduledRetry() {
       if (sessionRetryTimer) {

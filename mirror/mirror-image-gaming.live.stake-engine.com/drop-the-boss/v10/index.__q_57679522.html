@@ -3,49 +3,127 @@
 <head>
 <script>
 // ⚡ CRITICAL: выполняется ДО загрузки game scripts и offline.js
-(function() {
-  const SAFE_PARAMS = ['access_token', 'sessionID', 'rgs_url', 'lang', 'language', 'currency', 'device', 'social', 'demo', 'play_for_fun', '_t'];
+(function () {
+  var SAFE_PARAMS = ['access_token', 'sessionID', 'rgs_url', 'lang', 'language', 'currency', 'device', 'social', 'demo', 'play_for_fun', '_t'];
+
+  function repeat(str, count) {
+    var result = '';
+    for (var i = 0; i < count; i++) {
+      result += str;
+    }
+    return result;
+  }
+
+  function createParams(search) {
+    if (typeof search !== 'string') {
+      search = '';
+    }
+    if (search && search.charAt(0) === '?') {
+      search = search.substring(1);
+    }
+    if (typeof URLSearchParams === 'function') {
+      return new URLSearchParams(search);
+    }
+    return new LegacyParams(search);
+  }
+
+  function LegacyParams(search) {
+    this._map = {};
+    if (!search) return;
+    var pairs = search.split('&');
+    for (var i = 0; i < pairs.length; i++) {
+      var pair = pairs[i];
+      if (!pair) continue;
+      var eqIndex = pair.indexOf('=');
+      var key, value;
+      if (eqIndex === -1) {
+        key = decodeURIComponent(pair);
+        value = '';
+      } else {
+        key = decodeURIComponent(pair.substring(0, eqIndex));
+        value = decodeURIComponent(pair.substring(eqIndex + 1));
+      }
+      this._map[key] = value;
+    }
+  }
+
+  LegacyParams.prototype.get = function (key) {
+    return this._map.hasOwnProperty(key) ? this._map[key] : null;
+  };
+  LegacyParams.prototype.set = function (key, value) {
+    this._map[key] = String(value);
+  };
+  LegacyParams.prototype.has = function (key) {
+    return this._map.hasOwnProperty(key);
+  };
+  LegacyParams.prototype.delete = function (key) {
+    if (this._map.hasOwnProperty(key)) {
+      delete this._map[key];
+    }
+  };
+  LegacyParams.prototype.toString = function () {
+    var parts = [];
+    for (var key in this._map) {
+      if (!this._map.hasOwnProperty(key)) continue;
+      parts.push(encodeURIComponent(key) + '=' + encodeURIComponent(this._map[key]));
+    }
+    return parts.join('&');
+  };
 
   function decodeConfigFromHash() {
-    const hash = location.hash ? location.hash.substring(1) : '';
+    var hash = location.hash ? location.hash.substring(1) : '';
     if (!hash) return null;
-    const hashParams = new URLSearchParams(hash);
-    const encoded = hashParams.get('cfg');
+    var hashParams = createParams(hash);
+    var encoded = hashParams.get('cfg');
     if (!encoded) return null;
     try {
-      const normalized = encoded.replace(/-/g, '+').replace(/_/g, '/');
-      const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4);
-      const binary = atob(padded);
-      if (window.TextDecoder) {
-        const decoder = new TextDecoder();
-        const bytes = Uint8Array.from(binary, c => c.charCodeAt(0));
-        return JSON.parse(decoder.decode(bytes));
+      var normalized = encoded.replace(/-/g, '+').replace(/_/g, '/');
+      var padding = (4 - (normalized.length % 4)) % 4;
+      var padded = normalized + repeat('=', padding);
+      var binary = atob(padded);
+      var json;
+      if (window.TextDecoder && typeof Uint8Array === 'function') {
+        var decoder = new TextDecoder();
+        var bytes = new Uint8Array(binary.length);
+        for (var i = 0; i < binary.length; i++) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        json = decoder.decode(bytes);
+      } else {
+        var escaped = '';
+        for (var j = 0; j < binary.length; j++) {
+          var code = binary.charCodeAt(j).toString(16);
+          escaped += '%' + (code.length === 1 ? '0' + code : code);
+        }
+        json = decodeURIComponent(escaped);
       }
-      // Fallback для сред без TextDecoder
-      const decoded = decodeURIComponent(Array.prototype.map.call(binary, c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
-      return JSON.parse(decoded);
+      return JSON.parse(json);
     } catch (error) {
-      console.warn('[OFFLINE][HANDSHAKE] Failed to decode cfg hash:', error);
+      try {
+        console.warn('[OFFLINE][HANDSHAKE] Failed to decode cfg hash:', error);
+      } catch (_) {}
       return null;
     }
   }
 
   function normalizeRgsUrl(rgsUrl) {
     if (!rgsUrl) return null;
-    const clean = String(rgsUrl).trim();
+    var clean = String(rgsUrl).trim();
     if (!clean) return null;
-    const withProtocol = /^https?:\/\//i.test(clean) ? clean : `https://${clean}`;
+    var withProtocol = /^https?:\/\//i.test(clean) ? clean : 'https://' + clean;
     return withProtocol.replace(/\/+$/, '');
   }
 
   function persistSessionConfig(config) {
     if (!config) return;
     try {
-      localStorage.setItem('LAST_SESSION_ID', config.sessionID || '');
-      localStorage.setItem('OFFLINE_REAL_API_SESSION_ID', config.sessionID || '');
+      if (config.sessionID != null) {
+        localStorage.setItem('LAST_SESSION_ID', config.sessionID);
+        localStorage.setItem('OFFLINE_REAL_API_SESSION_ID', config.sessionID);
+      }
       if (config.rgsUrl) {
         localStorage.setItem('LAST_RGS_URL', config.rgsUrl);
-        const normalized = normalizeRgsUrl(config.rgsUrl);
+        var normalized = normalizeRgsUrl(config.rgsUrl);
         if (normalized) {
           localStorage.setItem('OFFLINE_REAL_API_URL', normalized);
         }
@@ -60,31 +138,37 @@
       localStorage.setItem('OFFLINE_USE_REAL_API', '1');
       localStorage.setItem('OFFLINE_ENABLE_SESSION_START_FALLBACK', '0');
     } catch (error) {
-      console.warn('[OFFLINE][HANDSHAKE] Failed to persist session config:', error);
+      try {
+        console.warn('[OFFLINE][HANDSHAKE] Failed to persist session config:', error);
+      } catch (_) {}
     }
     try {
-      sessionStorage.setItem('sessionID', config.sessionID || '');
+      if (config.sessionID != null) {
+        sessionStorage.setItem('sessionID', config.sessionID);
+      }
     } catch (_) {}
   }
 
-  function applySessionConfig(config, options = {}) {
+  function applySessionConfig(config, options) {
     if (!config || !config.sessionID) {
       return false;
     }
+    options = options || {};
 
-    const urlParams = new URLSearchParams(location.search);
-    let mutated = false;
+    var urlParams = createParams(location.search);
+    var mutated = false;
 
-    SAFE_PARAMS.forEach(key => {
-      const propKey = key === 'language' ? 'lang' : key;
+    for (var i = 0; i < SAFE_PARAMS.length; i++) {
+      var key = SAFE_PARAMS[i];
+      var propKey = key === 'language' ? 'lang' : key;
       if (config[propKey] !== undefined && config[propKey] !== null) {
-        const value = String(config[propKey]);
+        var value = String(config[propKey]);
         if (urlParams.get(key) !== value) {
           urlParams.set(key, value);
           mutated = true;
         }
       }
-    });
+    }
 
     if (!urlParams.get('sessionID') && config.sessionID) {
       urlParams.set('sessionID', config.sessionID);
@@ -111,10 +195,15 @@
       mutated = true;
     }
 
-    const newSearch = urlParams.toString();
     if (mutated || options.force) {
-      history.replaceState(null, '', location.pathname + '?' + newSearch + location.hash);
-      console.log('[OFFLINE][HANDSHAKE] URL updated via session config');
+      if (typeof history !== 'undefined' && history.replaceState) {
+        try {
+          history.replaceState(null, '', location.pathname + '?' + urlParams.toString() + location.hash);
+          console.log('[OFFLINE][HANDSHAKE] URL updated via session config');
+        } catch (error) {
+          console.warn('[OFFLINE][HANDSHAKE] Unable to update URL:', error);
+        }
+      }
     }
 
     window.__SESSION_CFG__ = {
@@ -128,26 +217,40 @@
       demo: config.demo
     };
 
-    document.dispatchEvent(new CustomEvent('SESSION_READY', { detail: window.__SESSION_CFG__ }));
+    try {
+      var sessionEvent;
+      if (typeof CustomEvent === 'function') {
+        sessionEvent = new CustomEvent('SESSION_READY', { detail: window.__SESSION_CFG__ });
+      } else if (document && document.createEvent) {
+        sessionEvent = document.createEvent('CustomEvent');
+        sessionEvent.initCustomEvent('SESSION_READY', false, false, window.__SESSION_CFG__);
+      }
+      if (sessionEvent) {
+        document.dispatchEvent(sessionEvent);
+      }
+    } catch (_) {}
+
     persistSessionConfig(config);
     return true;
   }
 
-  const hashConfig = decodeConfigFromHash();
+  var hashConfig = decodeConfigFromHash();
   if (hashConfig) {
     console.log('[OFFLINE][HANDSHAKE] Adopted config from URL hash');
     applySessionConfig(hashConfig, { force: true });
   }
 
-  const params = new URLSearchParams(location.search);
-  let mutated = false;
+  var params = createParams(location.search);
+  var mutated = false;
+
   if (!params.has('access_token')) {
-    const token = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzZXNzaW9uIjp7InBsYXllcklkIjoiZGVtbzp0b3BzcGluLXN0d2FsbGV0OjExMzU0MDc3IiwiZ2FtZUlkIjoidHMtdGctcGFwZXJwbGFuZSIsImlzUGxheUZvckZ1biI6dHJ1ZSwiY3VycmVuY3kiOiJVU0QiLCJmb3JjZUNvbmZpZyI6IiIsImlwQWRkcmVzcyI6Ijc4LjQwLjExNi4xMzYiLCJzdWJQYXJ0bmVySUQiOiIiLCJjYWxsQmFja1VSTCI6IiJ9fQ.LOsJIU1o3dul065zHwLrKXI4UPMoVcE1wfmwLwfjBKA';
-    params.set('access_token', token);
+    var fallbackToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzZXNzaW9uIjp7InBsYXllcklkIjoiZGVtbzp0b3BzcGluLXN0d2FsbGV0OjExMzU0MDc3IiwiZ2FtZUlkIjoidHMtdGctcGFwZXJwbGFuZSIsImlzUGxheUZvckZ1biI6dHJ1ZSwiY3VycmVuY3kiOiJVU0QiLCJmb3JjZUNvbmZpZyI6IiIsImlwQWRkcmVzcyI6Ijc4LjQwLjExNi4xMzYiLCJzdWJQYXJ0bmVySUQiOiIiLCJjYWxsQmFja1VSTCI6IiJ9fQ.LOsJIU1o3dul065zHwLrKXI4UPMoVcE1wfmwLwfjBKA';
+    params.set('access_token', fallbackToken);
     params.set('play_for_fun', 'true');
     mutated = true;
   }
-  const incomingLang = params.get('lang') || params.get('language');
+
+  var incomingLang = params.get('lang') || params.get('language');
   if (incomingLang) {
     if (params.get('lang') !== incomingLang) {
       params.set('lang', incomingLang);
@@ -157,25 +260,34 @@
     params.set('lang', 'en');
     mutated = true;
   }
+
   if (params.has('language')) {
     params.delete('language');
     mutated = true;
   }
+
   if (!params.has('currency')) {
     params.set('currency', 'USD');
     mutated = true;
   }
+
   if (mutated) {
-    history.replaceState(null, '', location.pathname + '?' + params.toString() + location.hash);
-    console.log('[OFFLINE] Updated URL bootstrap parameters');
+    if (typeof history !== 'undefined' && history.replaceState) {
+      try {
+        history.replaceState(null, '', location.pathname + '?' + params.toString() + location.hash);
+        console.log('[OFFLINE] Updated URL bootstrap parameters');
+      } catch (error) {
+        console.warn('[OFFLINE] Failed to update bootstrap URL:', error);
+      }
+    }
   }
 
   function handleHandshakeMessage(event) {
-    const data = event.data;
+    var data = event && event.data;
     if (!data || (data.type !== 'SET_SESSION_ID' && data.type !== 'SET_SESSION')) {
       return;
     }
-    const config = {
+    var config = {
       sessionID: data.sessionID,
       rgsUrl: data.rgsUrl || data.rgs_url,
       accessToken: data.accessToken,
@@ -195,23 +307,357 @@
     }
   }
 
-  window.addEventListener('message', handleHandshakeMessage, false);
+  if (window.addEventListener) {
+    window.addEventListener('message', handleHandshakeMessage, false);
+  }
+
+  function safeSet(key, value, store) {
+    if (value === undefined || value === null) {
+      return;
+    }
+    try {
+      (store || localStorage).setItem(key, String(value));
+    } catch (_) {}
+  }
+
+  function safeGet(key, store) {
+    try {
+      var value = (store || localStorage).getItem(key);
+      return value === null ? null : value;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function sleep(ms) {
+    return new Promise(function(resolve) {
+      setTimeout(resolve, ms);
+    });
+  }
+
+  function now() {
+    return Date.now();
+  }
+
+  function uuid4() {
+    if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+      var buffer = new Uint8Array(16);
+      crypto.getRandomValues(buffer);
+      buffer[6] = (buffer[6] & 0x0f) | 0x40;
+      buffer[8] = (buffer[8] & 0x3f) | 0x80;
+      var hex = [];
+      for (var i = 0; i < buffer.length; i++) {
+        var h = buffer[i].toString(16);
+        hex.push(h.length === 1 ? '0' + h : h);
+      }
+      return hex.slice(0, 4).join('') + '-' +
+        hex.slice(4, 6).join('') + '-' +
+        hex.slice(6, 8).join('') + '-' +
+        hex.slice(8, 10).join('') + '-' +
+        hex.slice(10, 16).join('');
+    }
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      var r = Math.random() * 16 | 0;
+      var v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  }
+
+  function resolveConfig() {
+    var searchParams = createParams(location.search);
+    var hashParams = createParams(location.hash ? location.hash.substring(1) : '');
+    var storedRgs = safeGet('rgs_url') || safeGet('rgs_url', sessionStorage);
+    var rgsUrl = searchParams.get('rgs_url') || hashParams.get('rgs_url') || storedRgs || 'https://rgs.twist-rgs.com';
+    var accessToken = searchParams.get('access_token') ||
+      hashParams.get('access_token') ||
+      safeGet('access_token', sessionStorage) ||
+      safeGet('OFFLINE_REAL_API_ACCESS_TOKEN') ||
+      safeGet('OFFLINE_USER_ACCESS_TOKEN');
+    var playForFunParam = searchParams.get('play_for_fun');
+    if (playForFunParam == null) {
+      playForFunParam = hashParams.get('play_for_fun');
+    }
+    if (playForFunParam == null) {
+      playForFunParam = safeGet('play_for_fun', sessionStorage);
+    }
+    var language = searchParams.get('language') ||
+      searchParams.get('lang') ||
+      hashParams.get('language') ||
+      hashParams.get('lang') ||
+      'en';
+    var currency = searchParams.get('currency') ||
+      hashParams.get('currency') ||
+      safeGet('OFFLINE_REAL_API_CURRENCY') ||
+      'USD';
+
+    safeSet('rgs_url', rgsUrl, sessionStorage);
+    if (accessToken) {
+      safeSet('access_token', accessToken, sessionStorage);
+    }
+    if (playForFunParam != null) {
+      safeSet('play_for_fun', playForFunParam, sessionStorage);
+    }
+
+    return {
+      rgsUrl: rgsUrl,
+      accessToken: accessToken,
+      playForFun: playForFunParam === '1' || playForFunParam === 'true' || playForFunParam === true,
+      language: language,
+      currency: currency
+    };
+  }
+
+  function readSessionFromEverywhere() {
+    var searchParams = createParams(location.search);
+    var hashParams = createParams(location.hash ? location.hash.substring(1) : '');
+    var fromUrl = searchParams.get('sessionID') || hashParams.get('sessionID');
+    var fromSession = safeGet('sessionID', sessionStorage);
+    var fromLocal = safeGet('OFFLINE_REAL_API_SESSION_ID') ||
+      safeGet('LAST_SESSION_ID') ||
+      safeGet('sessionID');
+    var sessionID = fromUrl || fromSession || fromLocal;
+    if (sessionID) {
+      return { sessionID: String(sessionID) };
+    }
+    return null;
+  }
+
+  function persistSession(session, cfg) {
+    var config = {
+      sessionID: session.sessionID,
+      rgsUrl: cfg.rgsUrl,
+      accessToken: cfg.accessToken,
+      currency: cfg.currency,
+      lang: cfg.language,
+      demo: cfg.playForFun ? 'true' : 'false'
+    };
+    applySessionConfig(config, { force: true });
+    safeSet('sessionID', session.sessionID, sessionStorage);
+    safeSet('sessionID', session.sessionID, localStorage);
+    safeSet('rgs_url', cfg.rgsUrl, sessionStorage);
+    safeSet('rgs_url', cfg.rgsUrl, localStorage);
+  }
+
+  async function fetchWithRetry(url, init, options) {
+    options = options || {};
+    var maxAttempts = options.maxAttempts != null ? options.maxAttempts : 5;
+    var baseMs = options.baseMs != null ? options.baseMs : 600;
+    var maxMs = options.maxMs != null ? options.maxMs : 8000;
+    var totalDeadlineMs = options.totalDeadlineMs != null ? options.totalDeadlineMs : 20000;
+    var retryOn = typeof options.retryOn === 'function' ? options.retryOn : function(status) {
+      return status === 0 || status === 408 || status === 429 || (status >= 500 && status <= 599);
+    };
+
+    var startTime = now();
+    var attempt = 0;
+    var lastError = null;
+
+    while (++attempt <= maxAttempts && now() - startTime < totalDeadlineMs) {
+      var perTryMs = Math.min(baseMs * Math.pow(2, attempt - 1), maxMs);
+      var controller = typeof AbortController === 'function' ? new AbortController() : null;
+      var timeoutId = null;
+      if (controller) {
+        timeoutId = setTimeout(function() {
+          try {
+            controller.abort();
+          } catch (_) {}
+        }, perTryMs);
+      }
+      var fetchInit = {};
+      if (init) {
+        for (var key in init) {
+          if (Object.prototype.hasOwnProperty.call(init, key)) {
+            fetchInit[key] = init[key];
+          }
+        }
+      }
+      fetchInit.cache = 'no-store';
+      fetchInit.mode = 'cors';
+      fetchInit.credentials = 'omit';
+      if (controller) {
+        fetchInit.signal = controller.signal;
+      }
+
+      try {
+        var resp = await fetch(url, fetchInit);
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+        if (!resp.ok) {
+          if (!retryOn(resp.status)) {
+            var text = '';
+            try {
+              text = await resp.text();
+            } catch (_) {}
+            throw new Error('HTTP ' + resp.status + ' ' + text.slice(0, 160));
+          }
+          var wait = Math.min(perTryMs, maxMs);
+          if (resp.headers && resp.headers.get) {
+            var retryAfter = resp.headers.get('retry-after');
+            if (retryAfter && /^\d+$/.test(retryAfter)) {
+              var parsed = parseInt(retryAfter, 10) * 1000;
+              if (parsed > wait) {
+                wait = parsed;
+              }
+            }
+          }
+          await sleep(wait * (0.6 + Math.random() * 0.8));
+          continue;
+        }
+        return resp;
+      } catch (error) {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+        lastError = error;
+        await sleep(Math.min(baseMs * Math.pow(2, attempt - 1), maxMs) * (0.6 + Math.random() * 0.8));
+      }
+    }
+
+    throw lastError || new Error('fetchWithRetry: deadline exceeded');
+  }
+
+  async function startSessionDirect(cfg) {
+    var base = cfg && cfg.rgsUrl ? cfg.rgsUrl : 'https://rgs.twist-rgs.com';
+    var url = base.replace(/\/+$/, '') + '/session/start';
+    var reqId = uuid4();
+    var payload = {
+      language: cfg && cfg.language ? cfg.language : 'en',
+      currency: cfg && cfg.currency ? cfg.currency : 'USD',
+      play_for_fun: !!(cfg && cfg.playForFun)
+    };
+    if (cfg && cfg.accessToken) {
+      payload.access_token = cfg.accessToken;
+    }
+    var response = await fetchWithRetry(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-request-id': reqId
+      },
+      body: JSON.stringify(payload)
+    });
+    var json = {};
+    try {
+      json = await response.json();
+    } catch (_) {}
+    var sessionIdValue = json.sessionID || json.sessionId;
+    if (!sessionIdValue) {
+      throw new Error('No sessionID in /session/start response');
+    }
+    console.log('[SESSION] startSessionDirect succeeded:', String(sessionIdValue).substring(0, 20) + '...');
+    return { sessionID: String(sessionIdValue) };
+  }
+
+  function waitParentSession(timeoutMs) {
+    timeoutMs = timeoutMs || 8000;
+    return new Promise(function(resolve) {
+      var finished = false;
+      function finish(value) {
+        if (finished) {
+          return;
+        }
+        finished = true;
+        if (window.removeEventListener) {
+          window.removeEventListener('message', handler, false);
+        }
+        resolve(value);
+      }
+      function handler(event) {
+        var data = event && event.data;
+        if (!data) {
+          return;
+        }
+        if ((data.type === 'SET_SESSION' || data.type === 'SET_SESSION_ID') && data.sessionID) {
+          finish({ sessionID: String(data.sessionID) });
+        }
+      }
+      if (window.addEventListener) {
+        window.addEventListener('message', handler, false);
+      }
+      try {
+        parent.postMessage({ type: 'IFRAME_READY' }, '*');
+      } catch (_) {}
+      setTimeout(function() {
+        finish(null);
+      }, timeoutMs);
+    });
+  }
+
+  var inflightSessionPromise = null;
+
+  function getSession() {
+    if (inflightSessionPromise) {
+      return inflightSessionPromise;
+    }
+    var promise = (async function() {
+      var existing = readSessionFromEverywhere();
+      if (existing && existing.sessionID) {
+        return existing;
+      }
+      var cfg = resolveConfig();
+      var parentPromise = waitParentSession(7000).catch(function() {
+        return null;
+      });
+      var directPromise = startSessionDirect(cfg).catch(function(error) {
+        console.warn('[SESSION] startSessionDirect failed:', error && error.message ? error.message : error);
+        return null;
+      });
+
+      var winner = await Promise.race([parentPromise, directPromise]);
+      if (!winner || !winner.sessionID) {
+        var parentResult = await parentPromise;
+        if (parentResult && parentResult.sessionID) {
+          winner = parentResult;
+        } else {
+          var directResult = await directPromise;
+          if (directResult && directResult.sessionID) {
+            winner = directResult;
+          }
+        }
+      }
+
+      if (!winner || !winner.sessionID) {
+        throw new Error('FAILED_SESSION_ACQUIRE');
+      }
+
+      persistSession(winner, cfg);
+      return winner;
+    })();
+
+    inflightSessionPromise = promise.then(function(result) {
+      inflightSessionPromise = null;
+      return result;
+    }).catch(function(error) {
+      inflightSessionPromise = null;
+      throw error;
+    });
+
+    return inflightSessionPromise;
+  }
+
+  window.__getSession = getSession;
 
   function requestSessionFromParent(type) {
     try {
-      parent.postMessage({ type }, '*');
+      parent.postMessage({ type: type }, '*');
     } catch (error) {
       console.warn('[OFFLINE][HANDSHAKE] Failed to request session from parent:', error);
     }
   }
 
   requestSessionFromParent('IFRAME_READY');
-  setTimeout(() => {
-    const checkParams = new URLSearchParams(location.search);
+
+  setTimeout(function () {
+    var checkParams = createParams(location.search);
     if (!checkParams.get('sessionID') || !checkParams.get('rgs_url')) {
       requestSessionFromParent('IFRAME_NEEDS_SESSION');
     }
   }, 500);
+
+  getSession().catch(function(err) {
+    console.warn('[SESSION] acquire failed:', err && err.message ? err.message : err);
+  });
 })();
 </script>
   <meta charset="utf-8">
