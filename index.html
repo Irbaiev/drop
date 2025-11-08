@@ -328,6 +328,23 @@
     // Получаем новый sessionID при каждой загрузке страницы
     const iframe = document.getElementById('game-frame');
     
+    const SESSION_RETRY_KEY = 'OFFLINE_SESSION_FETCH_ATTEMPTS';
+    function scheduleSessionRetry(reason) {
+      try {
+        const attempts = Number(sessionStorage.getItem(SESSION_RETRY_KEY)) || 0;
+        const nextAttempts = attempts + 1;
+        sessionStorage.setItem(SESSION_RETRY_KEY, String(nextAttempts));
+        const delay = Math.min(10000, 500 * nextAttempts);
+        console.warn('[GAME] 🔁 Перезагрузка страницы для повторного получения sessionID (попытка', nextAttempts, 'через', delay, 'мс). Причина:', reason?.message || reason);
+        setTimeout(() => {
+          window.location.reload();
+        }, delay);
+      } catch (e) {
+        console.error('[GAME] ❌ Не удалось запланировать перезагрузку, выполняем немедленный reload:', e);
+        window.location.reload();
+      }
+    }
+
     // Очищаем адресную строку родительской страницы от технических параметров
     try {
       const parentUrl = new URL(window.location.href);
@@ -380,7 +397,15 @@
     
     // Пробуем получить новый sessionID через GraphQL API
     getNewSessionFromStakeAPI().then(sessionData => {
+      if (!sessionData || !sessionData.sessionID || !sessionData.rgsUrl) {
+        console.error('[GAME] ❌ Получены некорректные данные sessionData:', sessionData);
+        scheduleSessionRetry(new Error('Invalid session data'));
+        return;
+      }
       console.log('[GAME] ✅ Успешно получен новый sessionID!');
+      try {
+        sessionStorage.removeItem(SESSION_RETRY_KEY);
+      } catch (_) {}
       
       // Парсим полный URL из config
       const configUrl = new URL(sessionData.fullUrl);
@@ -571,20 +596,8 @@
         }
       }, 1000);
     }).catch(err => {
-      console.warn('[GAME] ⚠️ Не удалось получить sessionID через API, используем fallback:', err);
-      
-      // Fallback: используем уникальный токен пользователя
-      const baseUrl = 'mirror/mirror-image-gaming.live.stake-engine.com/drop-the-boss/v10/index.__q_57679522.html';
-      
-      console.log('[GAME] 🔄 Используем access_token пользователя для fallback:', userToken.playerId.substring(0, 30) + '...');
-      
-      const params = new URLSearchParams({
-        access_token: userToken.accessToken,
-        play_for_fun: 'true',
-        language: 'en',
-        currency: 'USD'
-      });
-      iframe.src = `${baseUrl}?${params.toString()}`;
+      console.warn('[GAME] ⚠️ Не удалось получить sessionID через API. Инициируем повторную попытку:', err);
+      scheduleSessionRetry(err);
     });
     
     function resizeIframe() {
